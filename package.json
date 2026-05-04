@@ -1,0 +1,45 @@
+{
+  "name": "omninotation",
+  "displayName": "OmniNotation",
+  "version": "0.0.1",
+  "description": "Universal web page annotation and rewrite system",
+  "author": "OmniNotation Team",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "@plasmohq/storage": "^1.15.0",
+    "dom-anchor-text-quote": "^4.0.2",
+    "marked": "^18.0.3",
+    "plasmo": "^0.90.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^4.1.1",
+    "@types/chrome": "^0.0.258",
+    "@types/marked": "^5.0.2",
+    "@types/node": "^20.11.5",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "prettier": "^3.2.4",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.3.3"
+  },
+  "manifest": {
+    "host_permissions": [
+      "https://*/*",
+      "http://*/*"
+    ],
+    "permissions": [
+      "storage",
+      "activeTab",
+      "contextMenus",
+      "sidePanel"
+    ]
+  }
+}
