@@ -1,6 +1,8 @@
 export type AnnotationType = "comment" | "edit"
-export type Visibility = "private" | "friends" | "public"
+export type Visibility = "private" | "public" | "group"
 export type AnchorStrategy = "text-quote" | "css-selector" | "xpath"
+export type MarkStyle = "highlight" | "underline" | "strikethrough" | "squiggly"
+export type AnnotationStatus = "open" | "resolved"
 
 export interface Author {
   id: string
@@ -16,23 +18,53 @@ export interface TextQuoteSelector {
 export interface Reply {
   id: string
   content: string
+  author: Author
+  parentId?: string
   createdAt: string
+  replies?: Reply[]
+}
+
+export interface PositionSelector {
+  x: number
+  y: number
 }
 
 export interface Annotation {
   id: string
   url: string
+  title?: string
   selector?: TextQuoteSelector
+  position?: PositionSelector
   quote?: string
   data: {
     type: AnnotationType
     content: string
+    markStyle?: MarkStyle
   }
+  status?: AnnotationStatus
   author: Author
-  visibility: Visibility
   createdAt: string
   updatedAt?: string
   replies?: Reply[]
+}
+
+export interface AnnotationEntry {
+  url: string
+  annotations: Annotation[]
+}
+
+export interface Group {
+  id: string
+  name: string
+  members: Author[]
+  createdAt: string
+}
+
+export interface UserProfile {
+  id: string
+  name: string
+  avatar?: string
+  createdAt: string
 }
 
 export interface DomainConfig {
@@ -59,9 +91,20 @@ export interface Tenant {
   domain: string
 }
 
+export interface BookmarkFolder {
+  id: string
+  name: string
+  parentId?: string
+  createdAt: string
+}
+
 export interface Bookmark {
   id: string
   url: string
   title: string
+  tags?: string[]
+  folderId?: string
+  visibility?: Visibility
+  groupId?: string
   createdAt: string
 }

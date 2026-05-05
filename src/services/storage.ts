@@ -1,4 +1,4 @@
-import type { Annotation, Bookmark } from "@/types"
+import type { Annotation, AnnotationEntry, Bookmark, BookmarkFolder, Group, UserProfile, Reply, Visibility } from "@/types"
 
 const ANNOTATION_KEY_PREFIX = "annotations:"
 
@@ -87,6 +87,17 @@ export async function saveAnnotation(annotation: Annotation): Promise<void> {
     existing.push(annotation)
   }
   await safeSet({ [key]: existing })
+  // Auto-bookmark if not already bookmarked
+  const bookmarked = await isBookmarked(annotation.url)
+  if (!bookmarked) {
+    await addBookmark({
+      id: crypto.randomUUID(),
+      url: annotation.url,
+      title: annotation.title || annotation.url,
+      visibility: "private",
+      createdAt: new Date().toISOString()
+    })
+  }
 }
 
 export async function deleteAnnotation(url: string, id: string): Promise<void> {
@@ -106,18 +117,149 @@ export async function addReply(url: string, annotationId: string, reply: Reply):
   await safeSet({ [key]: annotations })
 }
 
+function findReplyRecursive(replies: Reply[], replyId: string): Reply | undefined {
+  for (const r of replies) {
+    if (r.id === replyId) return r
+    if (r.replies) {
+      const found = findReplyRecursive(r.replies, replyId)
+      if (found) return found
+    }
+  }
+  return undefined
+}
+
+function deleteReplyRecursive(replies: Reply[], replyId: string): boolean {
+  const index = replies.findIndex((r) => r.id === replyId)
+  if (index >= 0) {
+    replies.splice(index, 1)
+    return true
+  }
+  for (const r of replies) {
+    if (r.replies && deleteReplyRecursive(r.replies, replyId)) {
+      return true
+    }
+  }
+  return false
+}
+
+function updateReplyRecursive(replies: Reply[], replyId: string, content: string): boolean {
+  const reply = replies.find((r) => r.id === replyId)
+  if (reply) {
+    reply.content = content
+    return true
+  }
+  for (const r of replies) {
+    if (r.replies && updateReplyRecursive(r.replies, replyId, content)) {
+      return true
+    }
+  }
+  return false
+}
+
 export async function deleteReply(url: string, annotationId: string, replyId: string): Promise<void> {
   const key = getKey(url)
   const annotations = await getAnnotations(url)
   const ann = annotations.find((a) => a.id === annotationId)
   if (!ann || !ann.replies) return
-  ann.replies = ann.replies.filter((r) => r.id !== replyId)
+  deleteReplyRecursive(ann.replies, replyId)
+  await safeSet({ [key]: annotations })
+}
+
+export async function updateAnnotationContent(url: string, annotationId: string, content: string): Promise<void> {
+  const key = getKey(url)
+  const annotations = await getAnnotations(url)
+  const ann = annotations.find((a) => a.id === annotationId)
+  if (!ann) return
+  ann.data.content = content
+  ann.updatedAt = new Date().toISOString()
+  await safeSet({ [key]: annotations })
+}
+
+export async function updateReplyContent(url: string, annotationId: string, replyId: string, content: string): Promise<void> {
+  const key = getKey(url)
+  const annotations = await getAnnotations(url)
+  const ann = annotations.find((a) => a.id === annotationId)
+  if (!ann || !ann.replies) return
+  if (!updateReplyRecursive(ann.replies, replyId, content)) return
+  await safeSet({ [key]: annotations })
+}
+
+export async function updateAnnotationStatus(url: string, annotationId: string, status: "open" | "resolved"): Promise<void> {
+  const key = getKey(url)
+  const annotations = await getAnnotations(url)
+  const ann = annotations.find((a) => a.id === annotationId)
+  if (!ann) return
+  ann.status = status
   await safeSet({ [key]: annotations })
 }
 
 export async function clearAnnotations(url: string): Promise<void> {
   const key = getKey(url)
   await safeRemove(key)
+}
+
+export async function updateBookmarkVisibility(url: string, visibility: Visibility, groupId?: string): Promise<void> {
+  const bookmarks = await getBookmarks()
+  const bm = bookmarks.find((b) => b.url === url)
+  if (!bm) return
+  bm.visibility = visibility
+  if (groupId) bm.groupId = groupId
+  else delete bm.groupId
+  await safeSet({ [BOOKMARKS_KEY]: bookmarks })
+}
+
+export async function updateBookmarkTags(url: string, tags: string[]): Promise<void> {
+  const bookmarks = await getBookmarks()
+  const bm = bookmarks.find((b) => b.url === url)
+  if (!bm) return
+  bm.tags = tags
+  await safeSet({ [BOOKMARKS_KEY]: bookmarks })
+}
+
+// Hierarchical replies — reply to a specific reply
+export async function addNestedReply(url: string, annotationId: string, parentReplyId: string, reply: Reply): Promise<void> {
+  const key = getKey(url)
+  const annotations = await getAnnotations(url)
+  const ann = annotations.find((a) => a.id === annotationId)
+  if (!ann || !ann.replies) return
+  const parent = ann.replies.find((r) => r.id === parentReplyId)
+  if (!parent) return
+  if (!parent.replies) parent.replies = []
+  parent.replies.push(reply)
+  await safeSet({ [key]: annotations })
+}
+
+// Groups
+const GROUPS_KEY = "groups"
+
+export async function getGroups(): Promise<Group[]> {
+  const result = await safeGet(GROUPS_KEY)
+  return result[GROUPS_KEY] ?? []
+}
+
+export async function saveGroup(group: Group): Promise<void> {
+  const groups = await getGroups()
+  const index = groups.findIndex((g) => g.id === group.id)
+  if (index >= 0) groups[index] = group
+  else groups.push(group)
+  await safeSet({ [GROUPS_KEY]: groups })
+}
+
+export async function deleteGroup(id: string): Promise<void> {
+  const groups = await getGroups()
+  await safeSet({ [GROUPS_KEY]: groups.filter((g) => g.id !== id) })
+}
+
+// User profile
+const USER_PROFILE_KEY = "user_profile"
+
+export async function getUserProfile(): Promise<UserProfile | null> {
+  const result = await safeGet(USER_PROFILE_KEY)
+  return result[USER_PROFILE_KEY] ?? null
+}
+
+export async function saveUserProfile(profile: UserProfile): Promise<void> {
+  await safeSet({ [USER_PROFILE_KEY]: profile })
 }
 
 const ANNOTATION_ORDER_PREFIX = "annotation_order:"
@@ -179,4 +321,94 @@ export async function removeBookmark(url: string): Promise<void> {
   const bookmarks = await getBookmarks()
   const filtered = bookmarks.filter((b) => b.url !== url)
   await safeSet({ [BOOKMARKS_KEY]: filtered })
+}
+
+export async function updateBookmarkFolder(url: string, folderId: string | undefined): Promise<void> {
+  const bookmarks = await getBookmarks()
+  const bm = bookmarks.find((b) => b.url === url)
+  if (!bm) return
+  if (folderId) bm.folderId = folderId
+  else delete bm.folderId
+  await safeSet({ [BOOKMARKS_KEY]: bookmarks })
+}
+
+// Bookmark folders
+const BOOKMARK_FOLDERS_KEY = "bookmark_folders"
+
+export async function getBookmarkFolders(): Promise<BookmarkFolder[]> {
+  const result = await safeGet(BOOKMARK_FOLDERS_KEY)
+  return result[BOOKMARK_FOLDERS_KEY] ?? []
+}
+
+export async function saveBookmarkFolder(folder: BookmarkFolder): Promise<void> {
+  const folders = await getBookmarkFolders()
+  const index = folders.findIndex((f) => f.id === folder.id)
+  if (index >= 0) folders[index] = folder
+  else folders.push(folder)
+  await safeSet({ [BOOKMARK_FOLDERS_KEY]: folders })
+}
+
+export async function deleteBookmarkFolder(id: string): Promise<void> {
+  const folders = await getBookmarkFolders()
+  const filtered = folders.filter((f) => f.id !== id)
+  // Also remove folderId from bookmarks and child folders
+  const bookmarks = await getBookmarks()
+  bookmarks.forEach((b) => { if (b.folderId === id) delete b.folderId })
+  filtered.forEach((f) => { if (f.parentId === id) delete f.parentId })
+  await safeSet({ [BOOKMARK_FOLDERS_KEY]: filtered, [BOOKMARKS_KEY]: bookmarks })
+}
+
+export async function getAllAnnotations(): Promise<AnnotationEntry[]> {
+  const all = await safeGet(null as any)
+  const entries: AnnotationEntry[] = []
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith(ANNOTATION_KEY_PREFIX) && Array.isArray(value)) {
+      const url = key.slice(ANNOTATION_KEY_PREFIX.length)
+      entries.push({ url, annotations: value as Annotation[] })
+    }
+  }
+  // Sort by most recent annotation
+  entries.sort((a, b) => {
+    const aTime = a.annotations[a.annotations.length - 1]?.createdAt || ""
+    const bTime = b.annotations[b.annotations.length - 1]?.createdAt || ""
+    return bTime.localeCompare(aTime)
+  })
+  return entries
+}
+
+export function searchAnnotations(
+  entries: AnnotationEntry[],
+  query: string
+): AnnotationEntry[] {
+  if (!query.trim()) return entries
+  const q = query.trim().toLowerCase()
+
+  const searchReplies = (replies: Reply[]): boolean =>
+    replies.some((r) =>
+      r.content.toLowerCase().includes(q) ||
+      (r.replies ? searchReplies(r.replies) : false)
+    )
+
+  return entries
+    .map((entry) => {
+      const filtered = entry.annotations.filter((ann) => {
+        return (
+          ann.data.content.toLowerCase().includes(q) ||
+          (ann.title?.toLowerCase().includes(q) ?? false) ||
+          (ann.quote?.toLowerCase().includes(q) ?? false) ||
+          (ann.replies ? searchReplies(ann.replies) : false)
+        )
+      })
+      return filtered.length > 0 ? { ...entry, annotations: filtered } : null
+    })
+    .filter(Boolean) as AnnotationEntry[]
+}
+
+// Export / Import all data
+export async function exportAllData(): Promise<Record<string, any>> {
+  return safeGet(null as any)
+}
+
+export async function importAllData(data: Record<string, any>): Promise<void> {
+  await safeSet(data)
 }

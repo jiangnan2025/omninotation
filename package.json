@@ -12,7 +12,9 @@
   "dependencies": {
     "@plasmohq/storage": "^1.15.0",
     "dom-anchor-text-quote": "^4.0.2",
+    "katex": "^0.16.45",
     "marked": "^18.0.3",
+    "marked-katex": "^0.3.8",
     "plasmo": "^0.90.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

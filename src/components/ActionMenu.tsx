@@ -1,46 +1,45 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
-import { useTextSelection } from "@/hooks/useTextSelection"
 import * as anchor from "@/services/anchor"
 import { getDomainConfig } from "@/services/config"
 import * as storage from "@/services/storage"
+import type { MarkStyle } from "@/types"
 
+export interface SelectionInfo {
+  text: string
+  range: Range
+  rect: DOMRect
+}
 
-export function ActionMenu() {
-  const { selection, clearSelection } = useTextSelection()
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+const MARK_STYLES: { key: MarkStyle; label: string; icon: string }[] = [
+  { key: "highlight", label: "高亮", icon: "▌" },
+  { key: "underline", label: "下划线", icon: "U̲" },
+  { key: "strikethrough", label: "删除线", icon: "S̶" },
+  { key: "squiggly", label: "波浪线", icon: "〰" }
+]
+
+export function ActionMenu({
+  selection,
+  defaultMarkStyle = "highlight",
+  onClose
+}: {
+  selection: SelectionInfo | null
+  defaultMarkStyle?: MarkStyle
+  onClose: () => void
+}) {
   const formType = "comment"
   const [content, setContent] = useState("")
+  const [markStyle, setMarkStyle] = useState<MarkStyle>(defaultMarkStyle)
   const [authorName, setAuthorName] = useState("Me")
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (selection) {
-      const rect = selection.rect
-      setPos({
-        x: rect.left,
-        y: rect.top - 48
-      })
-    } else {
-      setPos(null)
+      setContent("")
+      setMarkStyle(defaultMarkStyle)
+      setTimeout(() => textareaRef.current?.focus(), 50)
     }
-  }, [selection])
-
-  useEffect(() => {
-    if (!pos) return
-    const handleClickOutside = (e: MouseEvent) => {
-      const path = e.composedPath()
-      const isInsideMenu = path.some(
-        (el) => el instanceof HTMLElement && el.hasAttribute("data-omninotation-menu")
-      )
-      if (isInsideMenu) return
-      const sel = window.getSelection()
-      if (sel && !sel.isCollapsed) return // 用户正在选中文本，不关闭
-      setPos(null)
-      clearSelection()
-    }
-    document.addEventListener("click", handleClickOutside)
-    return () => document.removeEventListener("click", handleClickOutside)
-  }, [pos, clearSelection])
+  }, [selection, defaultMarkStyle])
 
   const handleSave = useCallback(async () => {
     if (!selection || !content.trim()) return
@@ -58,36 +57,63 @@ export function ActionMenu() {
       url: location.href,
       selector,
       quote: selection.text.slice(0, 200),
-      data: { type: formType, content: content.trim() },
+      data: { type: formType, content: content.trim(), markStyle },
       author: { id: "local-user", name: authorName },
-      visibility: "private",
       createdAt: new Date().toISOString()
     })
 
     setContent("")
-    clearSelection()
-    setPos(null)
-  }, [selection, content, formType, authorName, clearSelection])
+    console.log("[ActionMenu] handleSave calling onClose")
+    onClose()
+  }, [selection, content, markStyle, authorName, onClose])
 
-  if (!pos || !selection) return null
+  if (!selection) return null
+
+  const pos = {
+    x: selection.rect.left,
+    y: selection.rect.top - 48
+  }
 
   return (
-    <div
-      className="fixed z-[2147483647] flex flex-col gap-2 pointer-events-none"
-      style={{
-        left: Math.max(8, Math.min(pos.x, window.innerWidth - 320)),
-        top: Math.max(8, pos.y)
-      }}>
-      <div data-omninotation-menu className="bg-white rounded-lg shadow-xl border border-gray-200 p-3 w-72 pointer-events-auto">
+    <>
+      {/* Backdrop: click outside to close */}
+      <div
+        className="fixed inset-0"
+        style={{ zIndex: 2147483646 }}
+        onClick={onClose}
+      />
+      <div
+        className="fixed z-[2147483647] flex flex-col gap-2"
+        style={{
+          left: Math.max(8, Math.min(pos.x, window.innerWidth - 320)),
+          top: Math.max(8, pos.y)
+        }}>
+        <div data-omninotation-menu className="bg-white rounded-lg shadow-xl border border-gray-200 p-3 w-72 pointer-events-auto">
         <div className="text-[10px] text-gray-400 mb-1">支持 Markdown 格式</div>
         <textarea
+          ref={textareaRef}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder={formType === "comment" ? "添加批注..." : "提议修改..."}
           className="w-full text-sm border border-gray-200 rounded p-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           rows={3}
-          autoFocus
         />
+        {/* Mark style selector */}
+        <div className="flex gap-1 mb-2">
+          {MARK_STYLES.map(({ key, label, icon }) => (
+            <button
+              key={key}
+              onClick={() => setMarkStyle(key)}
+              title={label}
+              className={`flex-1 text-xs py-1 rounded border transition-colors ${
+                markStyle === key
+                  ? "bg-blue-50 border-blue-300 text-blue-700"
+                  : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
+              }`}>
+              {icon}
+            </button>
+          ))}
+        </div>
         <div className="flex justify-between items-center">
           <input
             type="text"
@@ -98,10 +124,7 @@ export function ActionMenu() {
           />
           <div className="flex gap-2">
             <button
-              onClick={() => {
-                clearSelection()
-                setPos(null)
-              }}
+              onClick={() => { console.log("[ActionMenu] cancel button calling onClose"); onClose() }}
               className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">
               取消
             </button>
@@ -113,7 +136,8 @@ export function ActionMenu() {
             </button>
           </div>
         </div>
+        </div>
       </div>
-    </div>
+    </>
   )
 }

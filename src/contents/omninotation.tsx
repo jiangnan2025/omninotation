@@ -3,12 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import cssText from "data-text:~/style.css"
 
-import { ActionMenu } from "@/components/ActionMenu"
 import { SidebarContainer } from "@/components/SidebarContainer"
 import * as anchor from "@/services/anchor"
 import { getDomainConfig, shouldActivate } from "@/services/config"
-import { getKey, saveAnnotation } from "@/services/storage"
-import type { Annotation } from "@/types"
+import * as storage from "@/services/storage"
+import type { Annotation, MarkStyle } from "@/types"
 
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
@@ -35,23 +34,66 @@ export const getRootContainer = () => {
 // ========================
 
 const HIGHLIGHT_CLASS = "omninotation-highlight"
+const STICKY_CLASS = "omninotation-sticky"
 const PAGE_STYLE_ID = "omninotation-page-style"
 
-async function injectPageStyles() {
-  const color = await storage.getHighlightColor()
-  let style = document.getElementById(PAGE_STYLE_ID) as HTMLStyleElement | null
-  if (!style) {
-    style = document.createElement("style")
-    style.id = PAGE_STYLE_ID
-    document.head.appendChild(style)
-  }
-  style.textContent = `
-    .${HIGHLIGHT_CLASS} {
+function getMarkStyleCss(color: { bg: string; hover: string }): string {
+  return `
+    .${HIGHLIGHT_CLASS}.omninotation-style-highlight {
       cursor: pointer;
       background-color: ${color.bg} !important;
     }
-    .${HIGHLIGHT_CLASS}:hover {
+    .${HIGHLIGHT_CLASS}.omninotation-style-highlight:hover {
       background-color: ${color.hover} !important;
+    }
+    .${HIGHLIGHT_CLASS}.omninotation-style-underline {
+      cursor: pointer;
+      border-bottom: 2px solid ${color.bg.replace(/[\d.]+\)$/, "0.8)")} !important;
+      background-color: transparent !important;
+    }
+    .${HIGHLIGHT_CLASS}.omninotation-style-underline:hover {
+      border-bottom-color: ${color.hover.replace(/[\d.]+\)$/, "0.9)")} !important;
+    }
+    .${HIGHLIGHT_CLASS}.omninotation-style-strikethrough {
+      cursor: pointer;
+      text-decoration: line-through !important;
+      text-decoration-color: ${color.bg.replace(/[\d.]+\)$/, "0.7)")} !important;
+      background-color: transparent !important;
+    }
+    .${HIGHLIGHT_CLASS}.omninotation-style-strikethrough:hover {
+      text-decoration-color: ${color.hover.replace(/[\d.]+\)$/, "0.9)")} !important;
+    }
+    .${HIGHLIGHT_CLASS}.omninotation-style-squiggly {
+      cursor: pointer;
+      text-decoration: underline wavy !important;
+      text-decoration-color: ${color.bg.replace(/[\d.]+\)$/, "0.7)")} !important;
+      background-color: transparent !important;
+    }
+    .${HIGHLIGHT_CLASS}.omninotation-style-squiggly:hover {
+      text-decoration-color: ${color.hover.replace(/[\d.]+\)$/, "0.9)")} !important;
+    }
+    .${STICKY_CLASS} {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: ${color.bg.replace(/[\d.]+\)$/, "0.6)")};
+      border: 2px solid ${color.bg.replace(/[\d.]+\)$/, "0.9)")};
+      cursor: pointer;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    }
+    .${STICKY_CLASS}:hover {
+      transform: scale(1.2);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    .${STICKY_CLASS}::after {
+      content: "📌";
     }
     @keyframes omninotation-flash {
       0% { outline: 2px solid transparent; }
@@ -62,6 +104,17 @@ async function injectPageStyles() {
       animation: omninotation-flash 1.2s ease;
     }
   `
+}
+
+async function injectPageStyles() {
+  const color = await storage.getHighlightColor()
+  let style = document.getElementById(PAGE_STYLE_ID) as HTMLStyleElement | null
+  if (!style) {
+    style = document.createElement("style")
+    style.id = PAGE_STYLE_ID
+    document.head.appendChild(style)
+  }
+  style.textContent = getMarkStyleCss(color)
 }
 
 function clearHighlights() {
@@ -77,11 +130,41 @@ function clearHighlights() {
   })
 }
 
-function wrapRange(range: Range, id: string, type: "comment" | "edit") {
+function clearStickies() {
+  const stickies = document.querySelectorAll<HTMLElement>(`.${STICKY_CLASS}`)
+  stickies.forEach((el) => el.remove())
+}
+
+function renderSticky(ann: Annotation) {
+  if (!ann.position) return
+  const existing = document.querySelector<HTMLElement>(`.${STICKY_CLASS}[data-omninotation-id="${ann.id}"]`)
+  if (existing) return
+
+  const sticky = document.createElement("div")
+  sticky.className = STICKY_CLASS
+  sticky.dataset.omninotationId = ann.id
+  sticky.title = ann.data.content.slice(0, 100)
+  sticky.style.left = `${ann.position.x}px`
+  sticky.style.top = `${ann.position.y}px`
+
+  sticky.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    chrome.runtime.sendMessage({
+      type: "HIGHLIGHT_CLICKED",
+      annotationId: ann.id
+    }).catch(() => {})
+  })
+
+  document.body.appendChild(sticky)
+}
+
+function wrapRange(range: Range, id: string, type: "comment" | "edit", markStyle: string = "highlight") {
   const mark = document.createElement("mark")
-  mark.className = HIGHLIGHT_CLASS
+  mark.className = `${HIGHLIGHT_CLASS} omninotation-style-${markStyle}`
   mark.dataset.omninotationId = id
   mark.dataset.omninotationType = type
+  mark.dataset.omninotationStyle = markStyle
 
   // First try surroundContents - safest when range is within a single block
   try {
@@ -97,8 +180,7 @@ function wrapRange(range: Range, id: string, type: "comment" | "edit") {
   const walker = document.createTreeWalker(
     range.commonAncestorContainer,
     NodeFilter.SHOW_TEXT,
-    null,
-    false
+    null
   )
 
   let node: Node | null
@@ -173,10 +255,14 @@ function attachMarkClick(mark: HTMLElement, id: string) {
 
 function observeSpaNavigation(callback: () => void) {
   let lastUrl = location.href
+  let urlChangeTimer: ReturnType<typeof setTimeout> | null = null
   const observer = new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href
-      callback()
+      if (urlChangeTimer) clearTimeout(urlChangeTimer)
+      urlChangeTimer = setTimeout(() => {
+        callback()
+      }, 300)
     }
   })
   observer.observe(document.documentElement, { subtree: true, childList: true })
@@ -184,8 +270,16 @@ function observeSpaNavigation(callback: () => void) {
   window.addEventListener("hashchange", callback)
   return () => {
     observer.disconnect()
+    if (urlChangeTimer) clearTimeout(urlChangeTimer)
     window.removeEventListener("popstate", callback)
     window.removeEventListener("hashchange", callback)
+  }
+}
+
+function countRenderedAnnotations(): { marks: number; stickies: number } {
+  return {
+    marks: document.querySelectorAll(`mark.${HIGHLIGHT_CLASS}`).length,
+    stickies: document.querySelectorAll(`.${STICKY_CLASS}`).length
   }
 }
 
@@ -197,18 +291,23 @@ export default function OmniNotationOverlay() {
   const [url, setUrl] = useState(location.href)
   const isRendering = useRef(false)
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stickyMode = useRef(false)
+  const stickyTooltip = useRef<HTMLDivElement | null>(null)
+  const lastSelectionRef = useRef<{ text: string; range: Range; rect?: DOMRect } | null>(null)
+  const lastContextMenuPos = useRef<{ x: number; y: number } | null>(null)
 
   const renderAnnotations = useCallback((targetUrl: string) => {
     isRendering.current = true
     injectPageStyles().catch(() => {})
     clearHighlights()
+    clearStickies()
 
     if (!shouldActivate(targetUrl)) {
       isRendering.current = false
       return
     }
 
-    const key = getKey(targetUrl)
+    const key = storage.getKey(targetUrl)
 
     try {
       chrome.storage.local.get([key], (result) => {
@@ -226,14 +325,18 @@ export default function OmniNotationOverlay() {
         const root = anchor.getRootElement(config.rootSelector)
 
         for (const ann of annotations) {
-          if (!ann.selector) continue
-          const range = anchor.resolveRange(root, ann.selector)
-          if (range) {
-            try {
-              wrapRange(range, ann.id, ann.data.type)
-            } catch (e) {
-              console.warn("[OmniNotation] Failed to wrap highlight:", e)
+          if (ann.selector) {
+            const range = anchor.resolveRange(root, ann.selector)
+            if (range) {
+              try {
+                wrapRange(range, ann.id, ann.data.type, ann.data.markStyle || "highlight")
+              } catch (e) {
+                console.warn("[OmniNotation] Failed to wrap highlight:", e)
+              }
             }
+          }
+          if (ann.position) {
+            renderSticky(ann)
           }
         }
       })
@@ -270,11 +373,13 @@ export default function OmniNotationOverlay() {
       const hasExternalChange = mutations.some((m) => {
         const target = m.target as HTMLElement
         if (target.closest?.(`mark.${HIGHLIGHT_CLASS}`)) return false
+        if (target.closest?.(`.${STICKY_CLASS}`)) return false
         for (let i = 0; i < m.addedNodes.length; i++) {
           const node = m.addedNodes[i]
           if (node.nodeType === Node.ELEMENT_NODE) {
             const el = node as HTMLElement
             if (el.classList?.contains(HIGHLIGHT_CLASS)) continue
+            if (el.classList?.contains(STICKY_CLASS)) continue
             if (el.id === PAGE_STYLE_ID) continue
             return true
           }
@@ -285,6 +390,7 @@ export default function OmniNotationOverlay() {
           if (node.nodeType === Node.ELEMENT_NODE) {
             const el = node as HTMLElement
             if (el.classList?.contains(HIGHLIGHT_CLASS)) continue
+            if (el.classList?.contains(STICKY_CLASS)) continue
             return true
           }
           if (node.nodeType === Node.TEXT_NODE) return true
@@ -295,8 +401,22 @@ export default function OmniNotationOverlay() {
       if (hasExternalChange) {
         if (debounceTimer.current) clearTimeout(debounceTimer.current)
         debounceTimer.current = setTimeout(() => {
-          renderAnnotations(location.href)
-        }, 3000)
+          const key = storage.getKey(location.href)
+          try {
+            chrome.storage.local.get([key], (result) => {
+              if (chrome.runtime.lastError) return
+              const annotations: Annotation[] = result[key] ?? []
+              const expectedMarks = annotations.filter((a) => a.selector).length
+              const expectedStickies = annotations.filter((a) => a.position).length
+              const { marks, stickies } = countRenderedAnnotations()
+              if (marks !== expectedMarks || stickies !== expectedStickies) {
+                renderAnnotations(location.href)
+              }
+            })
+          } catch {
+            renderAnnotations(location.href)
+          }
+        }, 1200)
       }
     })
 
@@ -305,22 +425,86 @@ export default function OmniNotationOverlay() {
     // Listen for storage changes from action-menu
     const storageListener = (changes: any, area: string) => {
       if (area !== "local") return
-      const key = getKey(location.href)
+      const key = storage.getKey(location.href)
       if (changes[key]) {
         renderAnnotations(location.href)
       }
     }
     chrome.storage?.onChanged?.addListener(storageListener)
 
+    // Track text selection and context menu position
+    const handleSelectionChange = () => {
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+        const rect = range.getBoundingClientRect()
+        const text = sel.toString().trim()
+        if (text) {
+          lastSelectionRef.current = { text, range, rect }
+        }
+      }
+    }
+    document.addEventListener("selectionchange", handleSelectionChange)
+    document.addEventListener("mouseup", handleSelectionChange)
+
+    const handleContextMenu = (e: MouseEvent) => {
+      lastContextMenuPos.current = { x: e.clientX, y: e.clientY }
+    }
+    document.addEventListener("contextmenu", handleContextMenu)
+
+    // Sticky note placement handler
+    const handleStickyClick = (e: MouseEvent) => {
+      if (!stickyMode.current) return
+      const target = e.target as HTMLElement
+      if (target.closest(`.${STICKY_CLASS}`)) return
+      if (target.closest(`[data-omninotation-menu]`)) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      stickyMode.current = false
+
+      // Remove tooltip
+      if (stickyTooltip.current) {
+        stickyTooltip.current.remove()
+        stickyTooltip.current = null
+      }
+      document.body.style.cursor = ""
+
+      const annotation: Annotation = {
+        id: crypto.randomUUID(),
+        url: location.href,
+        title: document.title,
+        position: { x: e.pageX - 12, y: e.pageY - 12 },
+        data: { type: "comment", content: "" },
+        author: { id: "local-user", name: "Me" },
+        createdAt: new Date().toISOString()
+      }
+      storage.saveAnnotation(annotation).catch(() => {})
+    }
+    document.addEventListener("click", handleStickyClick, true)
+
     // Listen for messages from background (context menu, popup, side panel)
     const messageListener = (message: any, _sender: any, sendResponse: (r: any) => void) => {
       if (message.type === "TAB_UPDATED" && message.url === location.href) {
         renderAnnotations(location.href)
+      } else if (message.type === "START_STICKY_MODE") {
+        stickyMode.current = true
+        document.body.style.cursor = "crosshair"
+        // Show tooltip
+        const tooltip = document.createElement("div")
+        tooltip.textContent = "点击页面任意位置放置便签"
+        tooltip.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1f2937;color:white;padding:8px 16px;border-radius:8px;font-size:13px;z-index:2147483647;pointer-events:none;white-space:nowrap;"
+        document.body.appendChild(tooltip)
+        stickyTooltip.current = tooltip
       } else if (message.type === "GET_ANNOTATION_POSITIONS" && message.annotations) {
         const positions: Record<string, number> = {}
         const config = getDomainConfig(location.href)
         const root = anchor.getRootElement(config.rootSelector)
         for (const ann of message.annotations as Annotation[]) {
+          if (ann.position) {
+            positions[ann.id] = ann.position.y
+            continue
+          }
           if (!ann.selector) {
             positions[ann.id] = Infinity
             continue
@@ -343,23 +527,32 @@ export default function OmniNotationOverlay() {
           mark.scrollIntoView({ behavior: "smooth", block: "center" })
           mark.classList.add("omninotation-active")
           setTimeout(() => mark.classList.remove("omninotation-active"), 1500)
+        } else {
+          const sticky = document.querySelector<HTMLElement>(
+            `.${STICKY_CLASS}[data-omninotation-id="${message.annotationId}"]`
+          )
+          if (sticky) {
+            sticky.scrollIntoView({ behavior: "smooth", block: "center" })
+            sticky.style.transform = "scale(1.5)"
+            setTimeout(() => { sticky.style.transform = "" }, 1500)
+          }
         }
       } else if (message.type === "CONTEXT_MENU_SAVE" && message.text) {
-        const sel = window.getSelection()
-        if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
-          const range = sel.getRangeAt(0)
+        const selInfo = lastSelectionRef.current
+        const markStyle = (message.markStyle as MarkStyle) || "highlight"
+        if (selInfo) {
           const config = getDomainConfig(location.href)
           const root = anchor.getRootElement(config.rootSelector)
-          const selector = anchor.describeRange(root, range)
+          const selector = anchor.describeRange(root, selInfo.range)
           if (selector) {
-            saveAnnotation({
+            storage.saveAnnotation({
               id: crypto.randomUUID(),
               url: location.href,
+              title: document.title,
               selector,
-              quote: message.text.slice(0, 200),
-              data: { type: "comment", content: "右键保存" },
+              quote: selInfo.text.slice(0, 200),
+              data: { type: "comment", content: "", markStyle },
               author: { id: "local-user", name: "Me" },
-              visibility: "private",
               createdAt: new Date().toISOString()
             }).catch(() => {})
           }
@@ -374,6 +567,13 @@ export default function OmniNotationOverlay() {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
       chrome.storage?.onChanged?.removeListener(storageListener)
       chrome.runtime?.onMessage?.removeListener(messageListener)
+      document.removeEventListener("click", handleStickyClick, true)
+      document.removeEventListener("selectionchange", handleSelectionChange)
+      document.removeEventListener("mouseup", handleSelectionChange)
+      if (stickyTooltip.current) {
+        stickyTooltip.current.remove()
+        stickyTooltip.current = null
+      }
     }
   }, [renderAnnotations])
 
@@ -381,7 +581,6 @@ export default function OmniNotationOverlay() {
 
   return (
     <>
-      <ActionMenu />
       <SidebarContainer />
     </>
   )

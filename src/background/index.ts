@@ -2,13 +2,22 @@
 
 import * as storage from "@/services/storage"
 
+const MARK_STYLE_ITEMS = [
+  { id: "omninotation-highlight", title: "▌ 高亮", style: "highlight" },
+  { id: "omninotation-underline", title: "U̲ 下划线", style: "underline" },
+  { id: "omninotation-strikethrough", title: "S̶ 删除线", style: "strikethrough" },
+  { id: "omninotation-squiggly", title: "〰 波浪线", style: "squiggly" }
+] as const
+
 function setupContextMenu() {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "omninotation-send-to-note",
-      title: "发送到 OmniNotation",
-      contexts: ["selection"]
-    })
+    for (const item of MARK_STYLE_ITEMS) {
+      chrome.contextMenus.create({
+        id: item.id,
+        title: item.title,
+        contexts: ["selection"]
+      })
+    }
   })
 }
 
@@ -21,13 +30,19 @@ chrome.runtime.onInstalled.addListener(() => {
 setupContextMenu()
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "omninotation-send-to-note" && tab?.id && info.selectionText) {
+  const item = MARK_STYLE_ITEMS.find((i) => i.id === info.menuItemId)
+  if (item && tab?.id && info.selectionText) {
     chrome.tabs.sendMessage(tab.id, {
       type: "CONTEXT_MENU_SAVE",
-      text: info.selectionText
+      text: info.selectionText,
+      markStyle: item.style
     }).catch(() => {
       // Content script may not be injected yet
     })
+    // Open side panel so user can see/edit the new annotation
+    if (tab.windowId) {
+      chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {})
+    }
   }
 })
 
@@ -47,6 +62,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.action.onClicked.addListener((tab) => {
   if (tab.windowId) {
     chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {})
+  }
+})
+
+// Click mark in page → open side panel and scroll to annotation
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.type === "HIGHLIGHT_CLICKED" && sender.tab?.windowId) {
+    chrome.sidePanel.open({ windowId: sender.tab.windowId }).catch(() => {})
   }
 })
 
