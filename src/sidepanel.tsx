@@ -6,6 +6,7 @@ import * as storage from "@/services/storage"
 import type { Annotation, Reply, Group, Visibility } from "@/types"
 import { AnnotationCard } from "@/components/AnnotationCard"
 import { GroupManager } from "@/components/GroupManager"
+import { ToolbarSettings } from "@/components/ToolbarSettings"
 
 export default function SidePanel() {
   const [url, setUrl] = useState("")
@@ -29,6 +30,18 @@ export default function SidePanel() {
   const [showTagInput, setShowTagInput] = useState(false)
   const [tagInput, setTagInput] = useState("")
   const listRef = useRef<HTMLDivElement>(null)
+  const pendingEditIdsRef = useRef<Set<string>>(new Set())
+  const annotationsRef = useRef<Annotation[]>([])
+  const customOrderRef = useRef<string[] | null>(null)
+  useEffect(() => {
+    pendingEditIdsRef.current = pendingEditIds
+  }, [pendingEditIds])
+  useEffect(() => {
+    annotationsRef.current = annotations
+  }, [annotations])
+  useEffect(() => {
+    customOrderRef.current = customOrder
+  }, [customOrder])
 
   const matchesSearch = useCallback((ann: Annotation, query: string): boolean => {
     if (!query.trim()) return true
@@ -130,19 +143,28 @@ export default function SidePanel() {
       const key = storage.getKey(url)
       if (url && changes[key]) {
         const newAnns = changes[key].newValue as Annotation[] | undefined
+        const oldAnns = changes[key].oldValue as Annotation[] | undefined
         if (newAnns) {
-          setAnnotations(newAnns)
-          fetchPositionsAndSort(newAnns, customOrder)
-          // Auto-edit empty annotations from context menu
-          const emptyIds = newAnns
-            .filter((a) => a.data.content === "" && !pendingEditIds.has(a.id))
-            .map((a) => a.id)
-          if (emptyIds.length > 0) {
-            setPendingEditIds((prev) => {
-              const next = new Set(prev)
-              emptyIds.forEach((id) => next.add(id))
-              return next
-            })
+          // Only update if actually different from current state (avoid overwriting optimistic updates)
+          const currentIds = new Set(annotationsRef.current.map((a) => a.id))
+          const newIds = new Set(newAnns.map((a) => a.id))
+          const idsChanged = currentIds.size !== newIds.size || newAnns.some((a) => !currentIds.has(a.id)) || annotationsRef.current.some((a) => !newIds.has(a.id))
+          if (idsChanged) {
+            setAnnotations(newAnns)
+            fetchPositionsAndSort(newAnns, customOrderRef.current)
+          }
+          // Auto-edit empty annotations from context menu — only when newly added
+          if (!oldAnns || newAnns.length > oldAnns.length) {
+            const emptyIds = newAnns
+              .filter((a) => a.data.content === "" && !pendingEditIdsRef.current.has(a.id))
+              .map((a) => a.id)
+            if (emptyIds.length > 0) {
+              setPendingEditIds((prev) => {
+                const next = new Set(prev)
+                emptyIds.forEach((id) => next.add(id))
+                return next
+              })
+            }
           }
         }
       }
@@ -180,10 +202,13 @@ export default function SidePanel() {
   }, [url])
 
   const handleDelete = useCallback(async (id: string) => {
-    await storage.deleteAnnotation(url, id)
-    setAnnotations((prev) => {
-      const next = prev.filter((a) => a.id !== id)
-      setDisplayAnnotations(next)
+    // Optimistically update UI state immediately to avoid async re-render issues
+    const nextAnns = annotations.filter((a) => a.id !== id)
+    setAnnotations(nextAnns)
+    setDisplayAnnotations(nextAnns)
+    setPendingEditIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
       return next
     })
     if (customOrder) {
@@ -191,7 +216,8 @@ export default function SidePanel() {
       setCustomOrder(nextOrder.length > 0 ? nextOrder : null)
       await storage.saveAnnotationOrder(url, nextOrder)
     }
-  }, [url, customOrder])
+    await storage.deleteAnnotation(url, id)
+  }, [url, customOrder, annotations])
 
   const handleReplyAdded = useCallback((annId: string, reply: Reply) => {
     const updater = (prev: Annotation[]) =>
@@ -632,6 +658,9 @@ export default function SidePanel() {
         onCreate={handleCreateGroup}
         onDelete={handleDeleteGroup}
       />
+
+      {/* Toolbar settings */}
+      <ToolbarSettings />
 
       {/* Add annotation button */}
       <div className="px-4 py-2 border-b border-gray-100 shrink-0">

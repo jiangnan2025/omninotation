@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import * as anchor from "@/services/anchor"
 import { getDomainConfig } from "@/services/config"
+import { rangeToMarkdown } from "@/services/htmlToMarkdown"
 import * as storage from "@/services/storage"
 import type { MarkStyle } from "@/types"
 
@@ -42,7 +43,11 @@ export function ActionMenu({
   }, [selection, defaultMarkStyle])
 
   const handleSave = useCallback(async () => {
-    if (!selection || !content.trim()) return
+    if (!selection) return
+
+    // Convert selected HTML to markdown to preserve formatting
+    const selectedMarkdown = rangeToMarkdown(selection.range) || selection.text
+    if (!content.trim() && !selectedMarkdown) return
 
     const config = getDomainConfig(location.href)
     const root = anchor.getRootElement(config.rootSelector)
@@ -52,11 +57,12 @@ export function ActionMenu({
       return
     }
 
+    // quote = markdown formatted selected text; content = user's comment
     await storage.saveAnnotation({
       id: crypto.randomUUID(),
       url: location.href,
       selector,
-      quote: selection.text.slice(0, 200),
+      quote: selectedMarkdown.slice(0, 2000),
       data: { type: formType, content: content.trim(), markStyle },
       author: { id: "local-user", name: authorName },
       createdAt: new Date().toISOString()
@@ -130,7 +136,7 @@ export function ActionMenu({
             </button>
             <button
               onClick={handleSave}
-              disabled={!content.trim()}
+              disabled={!content.trim() && !selection.text.trim()}
               className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
               保存
             </button>

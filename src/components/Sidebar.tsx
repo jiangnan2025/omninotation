@@ -1,5 +1,6 @@
 import { useState } from "react"
 import type { Annotation } from "@/types"
+import { MarkdownContent } from "./MarkdownContent"
 
 interface SidebarProps {
   annotations: Annotation[]
@@ -61,8 +62,24 @@ export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
               </span>
               <span className="text-[10px] text-gray-400">{ann.author.name}</span>
             </div>
-            <p className="text-xs text-gray-500 mb-2 line-clamp-2 italic">“{ann.quote}”</p>
-            <p className="text-sm text-gray-800 leading-relaxed">{ann.data.content}</p>
+            {/* Quote rendered as markdown with copy button */}
+            {ann.quote && (
+              <div className="mb-2">
+                <div className="relative group">
+                  <div className="quote-content max-h-40 overflow-y-auto">
+                    <MarkdownContent text={ann.quote} />
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(ann.quote || "").catch(() => {})
+                    }}
+                    className="absolute top-0 right-0 text-[10px] text-gray-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity px-1 py-0.5 bg-white/80 rounded"
+                    title="复制">
+                    📋
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="flex justify-end mt-2">
               <button
                 onClick={() => onDelete(ann.id)}

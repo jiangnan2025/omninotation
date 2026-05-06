@@ -18,6 +18,16 @@ function setupContextMenu() {
         contexts: ["selection"]
       })
     }
+    chrome.contextMenus.create({
+      id: "omninotation-delete-annotation",
+      title: "删除此批注",
+      contexts: ["page"]
+    })
+    chrome.contextMenus.create({
+      id: "omninotation-copy-link-name",
+      title: "Copy Link Name",
+      contexts: ["link"]
+    })
   })
 }
 
@@ -44,6 +54,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {})
     }
   }
+  if (info.menuItemId === "omninotation-delete-annotation" && tab?.id) {
+    chrome.tabs.sendMessage(tab.id, { type: "CONTEXT_MENU_DELETE" }).catch(() => {})
+  }
+  if (info.menuItemId === "omninotation-copy-link-name" && tab?.id) {
+    chrome.tabs.sendMessage(tab.id, { type: "COPY_LINK_NAME" }).catch(() => {})
+  }
 })
 
 // Listen for tab updates to notify content scripts about URL changes
@@ -66,9 +82,19 @@ chrome.action.onClicked.addListener((tab) => {
 })
 
 // Click mark in page → open side panel and scroll to annotation
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "HIGHLIGHT_CLICKED" && sender.tab?.windowId) {
     chrome.sidePanel.open({ windowId: sender.tab.windowId }).catch(() => {})
+  }
+  if (message.type === "OPEN_BACKGROUND_TAB" && message.url) {
+    chrome.tabs.create({ url: message.url, active: false }).catch(() => {})
+    sendResponse({ ok: true })
+    return true
+  }
+  if (message.type === "OPEN_PINNED_TAB" && message.url) {
+    chrome.tabs.create({ url: message.url, pinned: true }).catch(() => {})
+    sendResponse({ ok: true })
+    return true
   }
 })
 

@@ -3,11 +3,25 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import cssText from "data-text:~/style.css"
 
-import { SidebarContainer } from "@/components/SidebarContainer"
+import { SelectionToolbar } from "@/components/SelectionToolbar"
 import * as anchor from "@/services/anchor"
 import { getDomainConfig, shouldActivate } from "@/services/config"
+import {
+  HIGHLIGHT_CLASS,
+  PAGE_STYLE_ID,
+  STICKY_CLASS,
+  clearHighlights,
+  clearStickies,
+  countRenderedAnnotations,
+  injectPageStyles,
+  observeSpaNavigation,
+  removeAnnotationFromDom,
+  renderSticky,
+  wrapRange
+} from "@/services/highlights"
+import { rangeToMarkdown } from "@/services/htmlToMarkdown"
 import * as storage from "@/services/storage"
-import type { Annotation, MarkStyle } from "@/types"
+import type { Annotation, MarkStyle, ToolbarConfig } from "@/types"
 
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
@@ -21,266 +35,17 @@ export const getStyle = () => {
 
 export const getShadowHostId = () => "omninotation-host"
 
+const ROOT_CONTAINER_ID = "omninotation-root"
+
 export const getRootContainer = () => {
-  const container = document.createElement("div")
-  container.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;overflow:visible;z-index:2147483647;"
+  let container = document.getElementById(ROOT_CONTAINER_ID) as HTMLDivElement | null
+  if (!container) {
+    container = document.createElement("div")
+    container.id = ROOT_CONTAINER_ID
+    container.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;overflow:visible;z-index:2147483647;"
+    document.documentElement.prepend(container)
+  }
   return container
-}
-
-
-
-// ========================
-// Highlight helpers (operate on host DOM)
-// ========================
-
-const HIGHLIGHT_CLASS = "omninotation-highlight"
-const STICKY_CLASS = "omninotation-sticky"
-const PAGE_STYLE_ID = "omninotation-page-style"
-
-function getMarkStyleCss(color: { bg: string; hover: string }): string {
-  return `
-    .${HIGHLIGHT_CLASS}.omninotation-style-highlight {
-      cursor: pointer;
-      background-color: ${color.bg} !important;
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-style-highlight:hover {
-      background-color: ${color.hover} !important;
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-style-underline {
-      cursor: pointer;
-      border-bottom: 2px solid ${color.bg.replace(/[\d.]+\)$/, "0.8)")} !important;
-      background-color: transparent !important;
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-style-underline:hover {
-      border-bottom-color: ${color.hover.replace(/[\d.]+\)$/, "0.9)")} !important;
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-style-strikethrough {
-      cursor: pointer;
-      text-decoration: line-through !important;
-      text-decoration-color: ${color.bg.replace(/[\d.]+\)$/, "0.7)")} !important;
-      background-color: transparent !important;
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-style-strikethrough:hover {
-      text-decoration-color: ${color.hover.replace(/[\d.]+\)$/, "0.9)")} !important;
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-style-squiggly {
-      cursor: pointer;
-      text-decoration: underline wavy !important;
-      text-decoration-color: ${color.bg.replace(/[\d.]+\)$/, "0.7)")} !important;
-      background-color: transparent !important;
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-style-squiggly:hover {
-      text-decoration-color: ${color.hover.replace(/[\d.]+\)$/, "0.9)")} !important;
-    }
-    .${STICKY_CLASS} {
-      position: absolute;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      background: ${color.bg.replace(/[\d.]+\)$/, "0.6)")};
-      border: 2px solid ${color.bg.replace(/[\d.]+\)$/, "0.9)")};
-      cursor: pointer;
-      z-index: 10000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      transition: transform 0.2s, box-shadow 0.2s;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
-    }
-    .${STICKY_CLASS}:hover {
-      transform: scale(1.2);
-      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-    }
-    .${STICKY_CLASS}::after {
-      content: "📌";
-    }
-    @keyframes omninotation-flash {
-      0% { outline: 2px solid transparent; }
-      50% { outline: 2px solid #3b82f6; }
-      100% { outline: 2px solid transparent; }
-    }
-    .${HIGHLIGHT_CLASS}.omninotation-active {
-      animation: omninotation-flash 1.2s ease;
-    }
-  `
-}
-
-async function injectPageStyles() {
-  const color = await storage.getHighlightColor()
-  let style = document.getElementById(PAGE_STYLE_ID) as HTMLStyleElement | null
-  if (!style) {
-    style = document.createElement("style")
-    style.id = PAGE_STYLE_ID
-    document.head.appendChild(style)
-  }
-  style.textContent = getMarkStyleCss(color)
-}
-
-function clearHighlights() {
-  const marks = document.querySelectorAll<HTMLElement>(`mark.${HIGHLIGHT_CLASS}`)
-  marks.forEach((el) => {
-    const parent = el.parentNode
-    if (!parent) return
-    while (el.firstChild) {
-      parent.insertBefore(el.firstChild, el)
-    }
-    parent.removeChild(el)
-    parent.normalize()
-  })
-}
-
-function clearStickies() {
-  const stickies = document.querySelectorAll<HTMLElement>(`.${STICKY_CLASS}`)
-  stickies.forEach((el) => el.remove())
-}
-
-function renderSticky(ann: Annotation) {
-  if (!ann.position) return
-  const existing = document.querySelector<HTMLElement>(`.${STICKY_CLASS}[data-omninotation-id="${ann.id}"]`)
-  if (existing) return
-
-  const sticky = document.createElement("div")
-  sticky.className = STICKY_CLASS
-  sticky.dataset.omninotationId = ann.id
-  sticky.title = ann.data.content.slice(0, 100)
-  sticky.style.left = `${ann.position.x}px`
-  sticky.style.top = `${ann.position.y}px`
-
-  sticky.addEventListener("click", (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    chrome.runtime.sendMessage({
-      type: "HIGHLIGHT_CLICKED",
-      annotationId: ann.id
-    }).catch(() => {})
-  })
-
-  document.body.appendChild(sticky)
-}
-
-function wrapRange(range: Range, id: string, type: "comment" | "edit", markStyle: string = "highlight") {
-  const mark = document.createElement("mark")
-  mark.className = `${HIGHLIGHT_CLASS} omninotation-style-${markStyle}`
-  mark.dataset.omninotationId = id
-  mark.dataset.omninotationType = type
-  mark.dataset.omninotationStyle = markStyle
-
-  // First try surroundContents - safest when range is within a single block
-  try {
-    range.surroundContents(mark)
-    attachMarkClick(mark, id)
-    return
-  } catch {
-    // Range spans block boundaries - fall through to text-node splitting
-  }
-
-  // Fallback: split by text nodes to avoid wrapping block-level elements
-  const textNodes: { node: Text; start: number; end: number }[] = []
-  const walker = document.createTreeWalker(
-    range.commonAncestorContainer,
-    NodeFilter.SHOW_TEXT,
-    null
-  )
-
-  let node: Node | null
-  while ((node = walker.nextNode())) {
-    const textNode = node as Text
-    const text = textNode.textContent || ""
-
-    let start = 0
-    let end = text.length
-
-    if (textNode === range.startContainer) {
-      start = range.startOffset
-    }
-    if (textNode === range.endContainer) {
-      end = range.endOffset
-    }
-
-    // Check if this text node intersects the range
-    const nodeRange = document.createRange()
-    nodeRange.selectNode(textNode)
-
-    const isAfterStart = range.compareBoundaryPoints(Range.START_TO_END, nodeRange) > 0 ||
-      (range.startContainer === textNode && range.startOffset < text.length)
-    const isBeforeEnd = range.compareBoundaryPoints(Range.END_TO_START, nodeRange) < 0 ||
-      (range.endContainer === textNode && range.endOffset > 0)
-
-    if (isAfterStart && isBeforeEnd && start < end) {
-      textNodes.push({ node: textNode, start, end })
-    }
-  }
-
-  // Process in reverse order so replacements don't shift later indices
-  textNodes.reverse().forEach(({ node, start, end }) => {
-    const text = node.textContent || ""
-    const before = text.slice(0, start)
-    const selected = text.slice(start, end)
-    const after = text.slice(end)
-
-    if (!selected) return
-
-    const fragment = document.createDocumentFragment()
-    if (before) {
-      fragment.appendChild(document.createTextNode(before))
-    }
-
-    const nodeMark = document.createElement("mark")
-    nodeMark.className = HIGHLIGHT_CLASS
-    nodeMark.dataset.omninotationId = id
-    nodeMark.dataset.omninotationType = type
-    nodeMark.textContent = selected
-    fragment.appendChild(nodeMark)
-
-    if (after) {
-      fragment.appendChild(document.createTextNode(after))
-    }
-
-    node.parentNode?.replaceChild(fragment, node)
-    attachMarkClick(nodeMark, id)
-  })
-}
-
-function attachMarkClick(mark: HTMLElement, id: string) {
-  mark.addEventListener("click", (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    chrome.runtime.sendMessage({
-      type: "HIGHLIGHT_CLICKED",
-      annotationId: id
-    }).catch(() => {})
-  })
-}
-
-function observeSpaNavigation(callback: () => void) {
-  let lastUrl = location.href
-  let urlChangeTimer: ReturnType<typeof setTimeout> | null = null
-  const observer = new MutationObserver(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href
-      if (urlChangeTimer) clearTimeout(urlChangeTimer)
-      urlChangeTimer = setTimeout(() => {
-        callback()
-      }, 300)
-    }
-  })
-  observer.observe(document.documentElement, { subtree: true, childList: true })
-  window.addEventListener("popstate", callback)
-  window.addEventListener("hashchange", callback)
-  return () => {
-    observer.disconnect()
-    if (urlChangeTimer) clearTimeout(urlChangeTimer)
-    window.removeEventListener("popstate", callback)
-    window.removeEventListener("hashchange", callback)
-  }
-}
-
-function countRenderedAnnotations(): { marks: number; stickies: number } {
-  return {
-    marks: document.querySelectorAll(`mark.${HIGHLIGHT_CLASS}`).length,
-    stickies: document.querySelectorAll(`.${STICKY_CLASS}`).length
-  }
 }
 
 // ========================
@@ -290,36 +55,66 @@ function countRenderedAnnotations(): { marks: number; stickies: number } {
 export default function OmniNotationOverlay() {
   const [url, setUrl] = useState(location.href)
   const isRendering = useRef(false)
+  const renderCooldownUntil = useRef(0)
+  const renderGeneration = useRef(0)
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stickyMode = useRef(false)
   const stickyTooltip = useRef<HTMLDivElement | null>(null)
+  const [popupSelection, setPopupSelection] = useState<{ text: string; range: Range; rect: DOMRect } | null>(null)
+  const popupSelectionRef = useRef(popupSelection)
+  useEffect(() => { popupSelectionRef.current = popupSelection }, [popupSelection])
+  const [toolbarConfig, setToolbarConfig] = useState<ToolbarConfig | null>(null)
+  const toolbarConfigRef = useRef<ToolbarConfig | null>(null)
   const lastSelectionRef = useRef<{ text: string; range: Range; rect?: DOMRect } | null>(null)
-  const lastContextMenuPos = useRef<{ x: number; y: number } | null>(null)
+  const lastClickedAnnotationId = useRef<string | null>(null)
+  const lastLinkText = useRef("")
+  const modifierState = useRef({ ctrl: false, alt: false, shift: false })
+  const pendingMiddleClick = useRef(false)
+  const hasSelectionOnMouseDown = useRef(false)
+  const hoverShowTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function isToolbarEnabledForUrl(targetUrl: string, cfg: ToolbarConfig | null): boolean {
+    if (!cfg || !cfg.enabled) return false
+    try {
+      const host = new URL(targetUrl).hostname
+      if (cfg.whitelist.length > 0) return cfg.whitelist.some((p) => host.includes(p))
+      if (cfg.blacklist.length > 0) return !cfg.blacklist.some((p) => host.includes(p))
+      return true
+    } catch {
+      return false
+    }
+  }
 
   const renderAnnotations = useCallback((targetUrl: string) => {
-    isRendering.current = true
-    injectPageStyles().catch(() => {})
-    clearHighlights()
-    clearStickies()
-
-    if (!shouldActivate(targetUrl)) {
-      isRendering.current = false
-      return
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current)
+      debounceTimer.current = null
     }
 
-    const key = storage.getKey(targetUrl)
+    isRendering.current = true
+    renderCooldownUntil.current = Date.now() + 3000
+    renderGeneration.current += 1
+    const currentGen = renderGeneration.current
 
     try {
+      injectPageStyles().catch(() => {})
+      clearHighlights()
+      clearStickies()
+
+      if (!shouldActivate(targetUrl)) { isRendering.current = false; return }
+
+      const key = storage.getKey(targetUrl)
       chrome.storage.local.get([key], (result) => {
-        isRendering.current = false
+        if (renderGeneration.current !== currentGen) return
 
         if (chrome.runtime.lastError) {
+          isRendering.current = false
           console.warn("[OmniNotation] 扩展已重新加载，请刷新页面以继续使用。")
           return
         }
 
         const annotations: Annotation[] = result[key] ?? []
-        if (annotations.length === 0) return
+        if (annotations.length === 0) { isRendering.current = false; return }
 
         const config = getDomainConfig(targetUrl)
         const root = anchor.getRootElement(config.rootSelector)
@@ -335,10 +130,10 @@ export default function OmniNotationOverlay() {
               }
             }
           }
-          if (ann.position) {
-            renderSticky(ann)
-          }
+          if (ann.position) renderSticky(ann)
         }
+
+        isRendering.current = false
       })
     } catch (e: any) {
       isRendering.current = false
@@ -350,26 +145,21 @@ export default function OmniNotationOverlay() {
     }
   }, [])
 
-  // Inject host page styles once
-  useEffect(() => {
-    injectPageStyles()
-  }, [])
+  // Inject page styles once
+  useEffect(() => { injectPageStyles() }, [])
 
   // Render highlights when URL changes
-  useEffect(() => {
-    renderAnnotations(url)
-  }, [url, renderAnnotations])
+  useEffect(() => { renderAnnotations(url) }, [url, renderAnnotations])
 
-  // SPA navigation detection + MutationObserver for dynamic content
+  // SPA navigation + MutationObserver + storage listener + input handlers
   useEffect(() => {
-    const handleNav = () => {
-      setUrl(location.href)
-    }
-
+    const handleNav = () => setUrl(location.href)
     const disposeNav = observeSpaNavigation(handleNav)
 
+    // MutationObserver: re-render only when external DOM changes detected
     const observer = new MutationObserver((mutations) => {
-      if (isRendering.current) return
+      if (isRendering.current || Date.now() < renderCooldownUntil.current) return
+
       const hasExternalChange = mutations.some((m) => {
         const target = m.target as HTMLElement
         if (target.closest?.(`mark.${HIGHLIGHT_CLASS}`)) return false
@@ -401,76 +191,153 @@ export default function OmniNotationOverlay() {
       if (hasExternalChange) {
         if (debounceTimer.current) clearTimeout(debounceTimer.current)
         debounceTimer.current = setTimeout(() => {
+          if (isRendering.current) return
           const key = storage.getKey(location.href)
           try {
             chrome.storage.local.get([key], (result) => {
-              if (chrome.runtime.lastError) return
+              if (chrome.runtime.lastError || isRendering.current) return
               const annotations: Annotation[] = result[key] ?? []
+              const { marks, stickies } = countRenderedAnnotations()
               const expectedMarks = annotations.filter((a) => a.selector).length
               const expectedStickies = annotations.filter((a) => a.position).length
-              const { marks, stickies } = countRenderedAnnotations()
               if (marks !== expectedMarks || stickies !== expectedStickies) {
                 renderAnnotations(location.href)
               }
             })
-          } catch {
-            renderAnnotations(location.href)
-          }
-        }, 1200)
+          } catch { /* ignore */ }
+        }, 1500)
       }
     })
-
     observer.observe(document.body, { subtree: true, childList: true, characterData: true })
 
-    // Listen for storage changes from action-menu
+    // Toolbar config
+    storage.getToolbarConfig().then(setToolbarConfig).catch(() => {
+      setToolbarConfig(storage.getDefaultToolbarConfig())
+    })
+
+    // Storage change listener
     const storageListener = (changes: any, area: string) => {
       if (area !== "local") return
       const key = storage.getKey(location.href)
-      if (changes[key]) {
-        renderAnnotations(location.href)
+      if (key && changes[key]) renderAnnotations(location.href)
+      if (changes["toolbar_config"]) {
+        const next = changes["toolbar_config"].newValue as ToolbarConfig | undefined
+        if (next) { setToolbarConfig(next); toolbarConfigRef.current = next }
       }
     }
     chrome.storage?.onChanged?.addListener(storageListener)
 
-    // Track text selection and context menu position
+    // Modifier keys
+    const handleKeyDown = (e: KeyboardEvent) => { modifierState.current = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey } }
+    const handleKeyUp = (e: KeyboardEvent) => { modifierState.current = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey } }
+    document.addEventListener("keydown", handleKeyDown)
+    document.addEventListener("keyup", handleKeyUp)
+
+    // Selection tracking
     const handleSelectionChange = () => {
       const sel = window.getSelection()
       if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
         const range = sel.getRangeAt(0)
         const rect = range.getBoundingClientRect()
         const text = sel.toString().trim()
-        if (text) {
-          lastSelectionRef.current = { text, range, rect }
-        }
+        if (text) lastSelectionRef.current = { text, range, rect }
       }
     }
     document.addEventListener("selectionchange", handleSelectionChange)
-    document.addEventListener("mouseup", handleSelectionChange)
 
+    const showToolbarIfAllowed = () => {
+      const cfg = toolbarConfigRef.current
+      if (!isToolbarEnabledForUrl(location.href, cfg)) return
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0)
+        const text = sel.toString().trim()
+        if (text) setPopupSelection({ text, range, rect: range.getBoundingClientRect() })
+      }
+    }
+
+    const handleMouseUp = (e: MouseEvent) => {
+      const host = document.getElementById(ROOT_CONTAINER_ID)
+      if (host && e.target === host) return
+
+      handleSelectionChange()
+      const cfg = toolbarConfigRef.current
+      if (!cfg || !cfg.enabled) return
+
+      if (cfg.triggerMode === "middle-click") {
+        if (pendingMiddleClick.current) {
+          pendingMiddleClick.current = false
+          setTimeout(showToolbarIfAllowed, 50)
+        }
+        return
+      }
+      if (cfg.triggerMode === "select") { showToolbarIfAllowed(); return }
+
+      const mod = modifierState.current
+      if ((cfg.triggerMode === "ctrl" && mod.ctrl) ||
+          (cfg.triggerMode === "alt" && mod.alt) ||
+          (cfg.triggerMode === "shift" && mod.shift)) {
+        showToolbarIfAllowed()
+      }
+    }
+
+    const handleMouseDown = (e: MouseEvent) => {
+      const sel = window.getSelection()
+      hasSelectionOnMouseDown.current = !!(sel && !sel.isCollapsed && sel.toString().trim())
+      const cfg = toolbarConfigRef.current
+      if (!cfg || !cfg.enabled || cfg.triggerMode !== "middle-click" || e.button !== 1) return
+      if (sel && !sel.isCollapsed) { e.preventDefault(); pendingMiddleClick.current = true }
+    }
+
+    document.addEventListener("mouseup", handleMouseUp)
+    document.addEventListener("mousedown", handleMouseDown)
+
+    // Hover re-show
+    const handleMouseMove = (e: MouseEvent) => {
+      if (popupSelectionRef.current) return
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
+      const rect = sel.getRangeAt(0).getBoundingClientRect()
+      const inRect = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom
+      if (inRect) {
+        if (hoverShowTimer.current) return
+        hoverShowTimer.current = setTimeout(() => {
+          hoverShowTimer.current = null
+          const currentSel = window.getSelection()
+          if (!currentSel || currentSel.isCollapsed) return
+          const r = currentSel.getRangeAt(0)
+          const t = currentSel.toString().trim()
+          if (t) setPopupSelection({ text: t, range: r, rect: r.getBoundingClientRect() })
+        }, 80)
+      } else {
+        if (hoverShowTimer.current) { clearTimeout(hoverShowTimer.current); hoverShowTimer.current = null }
+      }
+    }
+    document.addEventListener("mousemove", handleMouseMove)
+
+    // Context menu: track right-clicked annotation
     const handleContextMenu = (e: MouseEvent) => {
-      lastContextMenuPos.current = { x: e.clientX, y: e.clientY }
+      const target = e.target as HTMLElement
+      lastLinkText.current = (target.closest?.("a") as HTMLElement)?.textContent?.trim() || ""
+      const markEl = target.closest?.(`mark.${HIGHLIGHT_CLASS}`) as HTMLElement | null
+      const stickyEl = target.closest?.(`.${STICKY_CLASS}`) as HTMLElement | null
+      lastClickedAnnotationId.current = markEl?.dataset?.omninotationId || stickyEl?.dataset?.omninotationId || null
     }
     document.addEventListener("contextmenu", handleContextMenu)
 
-    // Sticky note placement handler
+    // Sticky note placement
     const handleStickyClick = (e: MouseEvent) => {
       if (!stickyMode.current) return
       const target = e.target as HTMLElement
-      if (target.closest(`.${STICKY_CLASS}`)) return
-      if (target.closest(`[data-omninotation-menu]`)) return
+      if (target.closest(`.${STICKY_CLASS}`) || target.closest(`[data-omninotation-menu]`)) return
 
       e.preventDefault()
       e.stopPropagation()
       stickyMode.current = false
-
-      // Remove tooltip
-      if (stickyTooltip.current) {
-        stickyTooltip.current.remove()
-        stickyTooltip.current = null
-      }
+      if (stickyTooltip.current) { stickyTooltip.current.remove(); stickyTooltip.current = null }
       document.body.style.cursor = ""
 
-      const annotation: Annotation = {
+      storage.saveAnnotation({
         id: crypto.randomUUID(),
         url: location.href,
         title: document.title,
@@ -478,85 +345,88 @@ export default function OmniNotationOverlay() {
         data: { type: "comment", content: "" },
         author: { id: "local-user", name: "Me" },
         createdAt: new Date().toISOString()
-      }
-      storage.saveAnnotation(annotation).catch(() => {})
+      }).catch(() => {})
     }
     document.addEventListener("click", handleStickyClick, true)
 
-    // Listen for messages from background (context menu, popup, side panel)
+    // Message handler
     const messageListener = (message: any, _sender: any, sendResponse: (r: any) => void) => {
-      if (message.type === "TAB_UPDATED" && message.url === location.href) {
-        renderAnnotations(location.href)
-      } else if (message.type === "START_STICKY_MODE") {
-        stickyMode.current = true
-        document.body.style.cursor = "crosshair"
-        // Show tooltip
-        const tooltip = document.createElement("div")
-        tooltip.textContent = "点击页面任意位置放置便签"
-        tooltip.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1f2937;color:white;padding:8px 16px;border-radius:8px;font-size:13px;z-index:2147483647;pointer-events:none;white-space:nowrap;"
-        document.body.appendChild(tooltip)
-        stickyTooltip.current = tooltip
-      } else if (message.type === "GET_ANNOTATION_POSITIONS" && message.annotations) {
-        const positions: Record<string, number> = {}
-        const config = getDomainConfig(location.href)
-        const root = anchor.getRootElement(config.rootSelector)
-        for (const ann of message.annotations as Annotation[]) {
-          if (ann.position) {
-            positions[ann.id] = ann.position.y
-            continue
+      switch (message.type) {
+        case "TAB_UPDATED":
+          if (message.url === location.href) renderAnnotations(location.href)
+          break
+        case "START_STICKY_MODE":
+          stickyMode.current = true
+          document.body.style.cursor = "crosshair"
+          const tooltip = document.createElement("div")
+          tooltip.textContent = "点击页面任意位置放置便签"
+          tooltip.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1f2937;color:white;padding:8px 16px;border-radius:8px;font-size:13px;z-index:2147483647;pointer-events:none;white-space:nowrap;"
+          document.body.appendChild(tooltip)
+          stickyTooltip.current = tooltip
+          break
+        case "GET_ANNOTATION_POSITIONS":
+          if (!message.annotations) break
+          const positions: Record<string, number> = {}
+          const cfg = getDomainConfig(location.href)
+          const root = anchor.getRootElement(cfg.rootSelector)
+          for (const ann of message.annotations as Annotation[]) {
+            if (ann.position) { positions[ann.id] = ann.position.y; continue }
+            if (!ann.selector) { positions[ann.id] = Infinity; continue }
+            const range = anchor.resolveRange(root, ann.selector)
+            positions[ann.id] = range ? range.getBoundingClientRect().top + window.scrollY : Infinity
           }
-          if (!ann.selector) {
-            positions[ann.id] = Infinity
-            continue
-          }
-          const range = anchor.resolveRange(root, ann.selector)
-          if (range) {
-            const rect = range.getBoundingClientRect()
-            positions[ann.id] = rect.top + window.scrollY
+          sendResponse({ type: "ANNOTATION_POSITIONS", positions })
+          return true
+        case "SCROLL_TO_HIGHLIGHT":
+          if (!message.annotationId) break
+          const mark = document.querySelector<HTMLElement>(`mark.${HIGHLIGHT_CLASS}[data-omninotation-id="${message.annotationId}"]`)
+          if (mark) {
+            mark.scrollIntoView({ behavior: "smooth", block: "center" })
+            mark.classList.add("omninotation-active")
+            setTimeout(() => mark.classList.remove("omninotation-active"), 1500)
           } else {
-            positions[ann.id] = Infinity
+            const sticky = document.querySelector<HTMLElement>(`.${STICKY_CLASS}[data-omninotation-id="${message.annotationId}"]`)
+            if (sticky) {
+              sticky.scrollIntoView({ behavior: "smooth", block: "center" })
+              sticky.style.transform = "scale(1.5)"
+              setTimeout(() => { sticky.style.transform = "" }, 1500)
+            }
           }
-        }
-        sendResponse({ type: "ANNOTATION_POSITIONS", positions })
-        return true
-      } else if (message.type === "SCROLL_TO_HIGHLIGHT" && message.annotationId) {
-        const mark = document.querySelector<HTMLElement>(
-          `mark.${HIGHLIGHT_CLASS}[data-omninotation-id="${message.annotationId}"]`
-        )
-        if (mark) {
-          mark.scrollIntoView({ behavior: "smooth", block: "center" })
-          mark.classList.add("omninotation-active")
-          setTimeout(() => mark.classList.remove("omninotation-active"), 1500)
-        } else {
-          const sticky = document.querySelector<HTMLElement>(
-            `.${STICKY_CLASS}[data-omninotation-id="${message.annotationId}"]`
-          )
-          if (sticky) {
-            sticky.scrollIntoView({ behavior: "smooth", block: "center" })
-            sticky.style.transform = "scale(1.5)"
-            setTimeout(() => { sticky.style.transform = "" }, 1500)
-          }
-        }
-      } else if (message.type === "CONTEXT_MENU_SAVE" && message.text) {
-        const selInfo = lastSelectionRef.current
-        const markStyle = (message.markStyle as MarkStyle) || "highlight"
-        if (selInfo) {
+          break
+        case "CONTEXT_MENU_SAVE":
+          if (!message.text) break
+          const selInfo = lastSelectionRef.current
+          if (!selInfo) break
+          const markStyle = (message.markStyle as MarkStyle) || "highlight"
           const config = getDomainConfig(location.href)
-          const root = anchor.getRootElement(config.rootSelector)
-          const selector = anchor.describeRange(root, selInfo.range)
+          const rootEl = anchor.getRootElement(config.rootSelector)
+          const selector = anchor.describeRange(rootEl, selInfo.range)
           if (selector) {
+            const selectedMarkdown = rangeToMarkdown(selInfo.range) || selInfo.text
             storage.saveAnnotation({
               id: crypto.randomUUID(),
               url: location.href,
               title: document.title,
               selector,
-              quote: selInfo.text.slice(0, 200),
+              quote: selectedMarkdown.slice(0, 2000),
               data: { type: "comment", content: "", markStyle },
               author: { id: "local-user", name: "Me" },
               createdAt: new Date().toISOString()
             }).catch(() => {})
           }
-        }
+          break
+        case "CONTEXT_MENU_DELETE":
+          if (lastClickedAnnotationId.current) {
+            const annId = lastClickedAnnotationId.current
+            lastClickedAnnotationId.current = null
+            storage.deleteAnnotation(location.href, annId).then(() => {
+              removeAnnotationFromDom(annId)
+            }).catch(() => {})
+          }
+          break
+        case "COPY_LINK_NAME":
+          if (lastLinkText.current) navigator.clipboard.writeText(lastLinkText.current).catch(() => {})
+          break
       }
     }
     chrome.runtime?.onMessage?.addListener(messageListener)
@@ -569,11 +439,13 @@ export default function OmniNotationOverlay() {
       chrome.runtime?.onMessage?.removeListener(messageListener)
       document.removeEventListener("click", handleStickyClick, true)
       document.removeEventListener("selectionchange", handleSelectionChange)
-      document.removeEventListener("mouseup", handleSelectionChange)
-      if (stickyTooltip.current) {
-        stickyTooltip.current.remove()
-        stickyTooltip.current = null
-      }
+      document.removeEventListener("mouseup", handleMouseUp)
+      document.removeEventListener("mousedown", handleMouseDown)
+      document.removeEventListener("mousemove", handleMouseMove)
+      document.removeEventListener("keydown", handleKeyDown)
+      document.removeEventListener("keyup", handleKeyUp)
+      if (hoverShowTimer.current) { clearTimeout(hoverShowTimer.current); hoverShowTimer.current = null }
+      if (stickyTooltip.current) { stickyTooltip.current.remove(); stickyTooltip.current = null }
     }
   }, [renderAnnotations])
 
@@ -581,7 +453,13 @@ export default function OmniNotationOverlay() {
 
   return (
     <>
-      <SidebarContainer />
+      {popupSelection && toolbarConfig && (
+        <SelectionToolbar
+          selection={{ text: popupSelection.text, range: popupSelection.range, rect: popupSelection.rect }}
+          config={toolbarConfig}
+          onClose={() => setPopupSelection(null)}
+        />
+      )}
     </>
   )
 }

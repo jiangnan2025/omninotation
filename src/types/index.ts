@@ -108,3 +108,46 @@ export interface Bookmark {
   groupId?: string
   createdAt: string
 }
+
+// ========================
+// Selection Toolbar
+// ========================
+
+export type ToolbarTriggerMode = "select" | "middle-click" | "ctrl" | "alt" | "shift"
+export type ToolbarLayout = "horizontal" | "grid"
+export type TabOpenMode = "current" | "new-tab" | "new-background-tab" | "pinned"
+
+export interface ToolbarSearchEngine {
+  id: string
+  name: string
+  urlTemplate: string
+  method?: "GET" | "POST"
+  postArgs?: string
+  favicon?: string
+  enabled: boolean
+}
+
+export interface ToolbarStyle {
+  backgroundColor: string
+  textColor: string
+  borderRadius: number
+  padding: number
+  buttonSize: number
+  gap: number
+  shadow: string
+}
+
+export interface ToolbarConfig {
+  enabled: boolean
+  triggerMode: ToolbarTriggerMode
+  engines: ToolbarSearchEngine[]
+  layout: ToolbarLayout
+  showAnnotations: boolean
+  showFaviconOnly: boolean
+  tabOpenMode: TabOpenMode
+  autoClose: boolean
+  autoCloseDelay: number
+  style: ToolbarStyle
+  blacklist: string[]
+  whitelist: string[]
+}

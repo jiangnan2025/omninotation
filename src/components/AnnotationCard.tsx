@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import * as storage from "@/services/storage"
 import type { Annotation, Reply } from "@/types"
 import { MarkdownContent } from "./MarkdownContent"
@@ -45,14 +45,15 @@ export function AnnotationCard({
 }) {
   const [replyText, setReplyText] = useState("")
   const [showReply, setShowReply] = useState(false)
-  const [isEditing, setIsEditing] = useState(autoEdit || false)
+  const initialAutoEditRef = useRef(autoEdit)
+  const [isEditing, setIsEditing] = useState(() => initialAutoEditRef.current || false)
   const [editText, setEditText] = useState(ann.data.content)
-
+  const mountCountRef = useRef(0)
+  mountCountRef.current++
   useEffect(() => {
-    if (autoEdit) {
-      setIsEditing(true)
-    }
-  }, [autoEdit])
+    console.log(`[AnnotationCard ${ann.id}] MOUNTED (autoEdit=${autoEdit}, initial isEditing=${isEditing})`)
+    return () => console.log(`[AnnotationCard ${ann.id}] UNMOUNTED`)
+  }, [ann.id])
 
   const handleAddReply = async () => {
     if (!replyText.trim() || !url) return
@@ -172,40 +173,57 @@ export function AnnotationCard({
         </div>
       </div>
 
-      {/* Quote (if has selected text) */}
+      {/* Quote (selected text rendered as markdown) */}
       {ann.quote && (
-        <p className="text-xs text-gray-500 mb-2 line-clamp-2 italic">"{ann.quote}"</p>
+        <div className="mb-2">
+          <div className="relative group">
+            <div className="quote-content max-h-48 overflow-y-auto">
+              <MarkdownContent text={ann.quote} />
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                navigator.clipboard.writeText(ann.quote || "").catch(() => {})
+              }}
+              className="absolute top-0 right-0 text-[10px] text-gray-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity px-1 py-0.5 bg-white/80 rounded"
+              title="复制">
+              📋
+            </button>
+          </div>
+        </div>
       )}
 
-      {/* Content */}
-      <div className="mb-2" onClick={(e) => e.stopPropagation()}>
-        {isEditing ? (
-          <div className="space-y-1">
-            <textarea
-              value={editText}
-              onChange={(e) => setEditText(e.target.value)}
-              className="w-full text-xs border border-gray-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
-              rows={3}
-              autoFocus
-            />
-            <div className="flex gap-1 justify-end">
-              <button
-                onClick={() => { setIsEditing(false); setEditText(ann.data.content) }}
-                className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 rounded border border-gray-200 hover:bg-gray-50">
-                取消
-              </button>
-              <button
-                onClick={handleSaveEdit}
-                disabled={!editText.trim()}
-                className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                保存
-              </button>
+      {/* User comment (if any) */}
+      {ann.data.content && (
+        <div className="mb-2" onClick={(e) => e.stopPropagation()}>
+          {isEditing ? (
+            <div className="space-y-1">
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="w-full text-xs border border-gray-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                rows={3}
+                autoFocus
+              />
+              <div className="flex gap-1 justify-end">
+                <button
+                  onClick={() => { setIsEditing(false); setEditText(ann.data.content) }}
+                  className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 rounded border border-gray-200 hover:bg-gray-50">
+                  取消
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={!editText.trim()}
+                  className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                  保存
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <MarkdownContent text={ann.data.content} />
-        )}
-      </div>
+          ) : (
+            <MarkdownContent text={ann.data.content} />
+          )}
+        </div>
+      )}
 
       {/* Replies */}
       {ann.replies && ann.replies.length > 0 && (

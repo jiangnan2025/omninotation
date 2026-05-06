@@ -1,4 +1,4 @@
-import type { Annotation, AnnotationEntry, Bookmark, BookmarkFolder, Group, UserProfile, Reply, Visibility } from "@/types"
+import type { Annotation, AnnotationEntry, Bookmark, BookmarkFolder, Group, UserProfile, Reply, Visibility, ToolbarConfig, ToolbarSearchEngine, ToolbarStyle } from "@/types"
 
 const ANNOTATION_KEY_PREFIX = "annotations:"
 
@@ -411,4 +411,74 @@ export async function exportAllData(): Promise<Record<string, any>> {
 
 export async function importAllData(data: Record<string, any>): Promise<void> {
   await safeSet(data)
+}
+
+// ========================
+// Toolbar config
+// ========================
+
+const TOOLBAR_CONFIG_KEY = "toolbar_config"
+
+const DEFAULT_ENGINES: ToolbarSearchEngine[] = [
+  {
+    id: "google",
+    name: "Google",
+    urlTemplate: "https://www.google.com/search?q=%s",
+    method: "GET",
+    favicon: "🔍",
+    enabled: true
+  },
+  {
+    id: "bing",
+    name: "Bing",
+    urlTemplate: "https://www.bing.com/search?q=%s",
+    method: "GET",
+    favicon: "🅱️",
+    enabled: true
+  }
+]
+
+const DEFAULT_STYLE: ToolbarStyle = {
+  backgroundColor: "#ffffff",
+  textColor: "#374151",
+  borderRadius: 8,
+  padding: 4,
+  buttonSize: 28,
+  gap: 2,
+  shadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)"
+}
+
+export function getDefaultToolbarConfig(): ToolbarConfig {
+  return {
+    enabled: true,
+    triggerMode: "select",
+    engines: DEFAULT_ENGINES,
+    layout: "horizontal",
+    showAnnotations: true,
+    showFaviconOnly: true,
+    tabOpenMode: "new-tab",
+    autoClose: true,
+    autoCloseDelay: 3000,
+    style: DEFAULT_STYLE,
+    blacklist: [],
+    whitelist: []
+  }
+}
+
+export async function getToolbarConfig(): Promise<ToolbarConfig> {
+  const result = await safeGet(TOOLBAR_CONFIG_KEY)
+  const saved = result[TOOLBAR_CONFIG_KEY] as ToolbarConfig | undefined
+  if (!saved) return getDefaultToolbarConfig()
+  // Merge with defaults to ensure new fields exist
+  const defaults = getDefaultToolbarConfig()
+  return {
+    ...defaults,
+    ...saved,
+    style: { ...defaults.style, ...(saved.style || {}) },
+    engines: saved.engines?.length ? saved.engines : defaults.engines
+  }
+}
+
+export async function saveToolbarConfig(config: ToolbarConfig): Promise<void> {
+  await safeSet({ [TOOLBAR_CONFIG_KEY]: config })
 }
