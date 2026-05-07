@@ -413,6 +413,36 @@ export async function importAllData(data: Record<string, any>): Promise<void> {
   await safeSet(data)
 }
 
+// Export / Import annotations for a single page
+export async function exportPageAnnotations(url: string): Promise<Record<string, any>> {
+  const key = getKey(url)
+  const orderKey = getOrderKey(url)
+  const result = await safeGet([key, orderKey])
+  const data: Record<string, any> = {}
+  if (result[key]) data[key] = result[key]
+  if (result[orderKey]) data[orderKey] = result[orderKey]
+  return data
+}
+
+export async function importPageAnnotations(url: string, data: Record<string, any>): Promise<boolean> {
+  // Try to find annotations by scanning keys or by URL matching
+  const key = getKey(url)
+  if (data[key]) {
+    await safeSet({ [key]: data[key] })
+    const orderKey = getOrderKey(url)
+    if (data[orderKey]) await safeSet({ [orderKey]: data[orderKey] })
+    return true
+  }
+  // If no exact key match, try to find any annotations:* key and import to this URL
+  for (const [k, v] of Object.entries(data)) {
+    if (k.startsWith(ANNOTATION_KEY_PREFIX) && Array.isArray(v)) {
+      await safeSet({ [key]: v })
+      return true
+    }
+  }
+  return false
+}
+
 // ========================
 // Toolbar config
 // ========================

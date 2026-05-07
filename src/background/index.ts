@@ -2,25 +2,57 @@
 
 import * as storage from "@/services/storage"
 
+// i18n for background (service worker can't use navigator.language)
+function bgDetectLocale(): "zh-CN" | "en" {
+  try {
+    const lang = chrome.i18n.getUILanguage()
+    return lang.startsWith("zh") ? "zh-CN" : "en"
+  } catch {
+    return "en"
+  }
+}
+
+const BG_STRINGS = {
+  "zh-CN": {
+    contextMenuHighlight: "▌ 高亮",
+    contextMenuUnderline: "U̲ 下划线",
+    contextMenuStrikethrough: "S̶ 删除线",
+    contextMenuSquiggly: "〰 波浪线",
+    contextMenuDelete: "删除此批注"
+  },
+  en: {
+    contextMenuHighlight: "▌ Highlight",
+    contextMenuUnderline: "U̲ Underline",
+    contextMenuStrikethrough: "S̶ Strikethrough",
+    contextMenuSquiggly: "〰 Squiggly",
+    contextMenuDelete: "Delete this annotation"
+  }
+}
+
+function getBgStrings() {
+  return BG_STRINGS[bgDetectLocale()]
+}
+
 const MARK_STYLE_ITEMS = [
-  { id: "omninotation-highlight", title: "▌ 高亮", style: "highlight" },
-  { id: "omninotation-underline", title: "U̲ 下划线", style: "underline" },
-  { id: "omninotation-strikethrough", title: "S̶ 删除线", style: "strikethrough" },
-  { id: "omninotation-squiggly", title: "〰 波浪线", style: "squiggly" }
+  { id: "omninotation-highlight", style: "highlight", titleKey: "contextMenuHighlight" as const },
+  { id: "omninotation-underline", style: "underline", titleKey: "contextMenuUnderline" as const },
+  { id: "omninotation-strikethrough", style: "strikethrough", titleKey: "contextMenuStrikethrough" as const },
+  { id: "omninotation-squiggly", style: "squiggly", titleKey: "contextMenuSquiggly" as const }
 ] as const
 
 function setupContextMenu() {
+  const S = getBgStrings()
   chrome.contextMenus.removeAll(() => {
     for (const item of MARK_STYLE_ITEMS) {
       chrome.contextMenus.create({
         id: item.id,
-        title: item.title,
+        title: S[item.titleKey],
         contexts: ["selection"]
       })
     }
     chrome.contextMenus.create({
       id: "omninotation-delete-annotation",
-      title: "删除此批注",
+      title: S.contextMenuDelete,
       contexts: ["page"]
     })
     chrome.contextMenus.create({

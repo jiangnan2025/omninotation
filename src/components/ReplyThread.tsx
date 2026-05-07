@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import type { Reply } from "@/types"
+import { detectLocale, t, type Locale } from "@/services/i18n"
 import { MarkdownContent } from "./MarkdownContent"
 
 export function ReplyThread({
@@ -19,6 +20,8 @@ export function ReplyThread({
   const [editText, setEditText] = useState(reply.content)
   const [showReplyBox, setShowReplyBox] = useState(false)
   const [replyText, setReplyText] = useState("")
+  const locale = useRef<Locale>(detectLocale()).current
+  const L = t(locale)
 
   const handleSave = () => {
     const trimmed = editText.trim()
@@ -54,20 +57,20 @@ export function ReplyThread({
               <button
                 onClick={() => { setIsEditing(false); setEditText(reply.content) }}
                 className="px-1.5 py-0.5 text-[10px] text-gray-500 hover:text-gray-700 rounded border border-gray-200 hover:bg-gray-50">
-                取消
+                {L.cancel}
               </button>
               <button
                 onClick={handleSave}
                 disabled={!editText.trim()}
                 className="px-1.5 py-0.5 text-[10px] bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                保存
+                {L.save}
               </button>
             </div>
           </div>
         ) : (
           <>
             <div className="flex items-center gap-1.5 mb-1">
-              <span className="text-[10px] font-medium text-gray-600">{reply.author?.name || "匿名"}</span>
+              <span className="text-[10px] font-medium text-gray-600">{reply.author?.name || L.anonymous}</span>
               <span className="text-[9px] text-gray-300">·</span>
               <span className="text-[10px] text-gray-400">
                 {new Date(reply.createdAt).toLocaleString()}
@@ -78,17 +81,17 @@ export function ReplyThread({
               <button
                 onClick={() => setShowReplyBox((v) => !v)}
                 className="text-[10px] text-gray-400 hover:text-blue-600 hover:underline">
-                回复
+                {L.reply}
               </button>
               <button
                 onClick={() => setIsEditing(true)}
                 className="text-[10px] text-gray-400 hover:text-gray-600 hover:underline">
-                编辑
+                {L.edit}
               </button>
               <button
                 onClick={() => onDelete(reply.id)}
                 className="text-[10px] text-red-400 hover:text-red-600 hover:underline">
-                删除
+                {L.delete}
               </button>
             </div>
           </>
@@ -99,7 +102,7 @@ export function ReplyThread({
             <textarea
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}
-              placeholder="回复这条评论..."
+              placeholder={L.replyPlaceholder}
               className="w-full text-xs border border-gray-200 rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
               rows={2}
               autoFocus
@@ -108,13 +111,13 @@ export function ReplyThread({
               <button
                 onClick={() => { setShowReplyBox(false); setReplyText("") }}
                 className="px-1.5 py-0.5 text-[10px] text-gray-500 hover:text-gray-700 rounded border border-gray-200 hover:bg-gray-50">
-                取消
+                {L.cancel}
               </button>
               <button
                 onClick={handleReply}
                 disabled={!replyText.trim()}
                 className="px-1.5 py-0.5 text-[10px] bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                发送
+                {L.send}
               </button>
             </div>
           </div>

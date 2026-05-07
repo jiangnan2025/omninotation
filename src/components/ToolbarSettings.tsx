@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 
 import * as storage from "@/services/storage"
+import { detectLocale, t, type Locale } from "@/services/i18n"
 import type { ToolbarConfig, ToolbarSearchEngine, ToolbarTriggerMode, ToolbarLayout, TabOpenMode } from "@/types"
 
 function getFaviconUrl(urlTemplate: string): string {
@@ -12,7 +13,9 @@ function getFaviconUrl(urlTemplate: string): string {
   }
 }
 
-export function ToolbarSettings() {
+export function ToolbarSettings({ locale: localeProp }: { locale?: Locale } = {}) {
+  const locale = localeProp || detectLocale()
+  const L = t(locale)
   const [config, setConfig] = useState<ToolbarConfig | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [newEngineName, setNewEngineName] = useState("")
@@ -65,11 +68,11 @@ export function ToolbarSettings() {
     const icon = newEngineIcon.trim()
     if (!name || !url) return
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      alert("搜索 URL 必须以 http:// 或 https:// 开头")
+      alert(L.urlMustStartWithHttp)
       return
     }
     if (!url.includes("%s") && !url.includes("{POSTARGS}")) {
-      alert("搜索 URL 必须包含 %s 或 {POSTARGS}")
+      alert(L.urlMustContainPlaceholder)
       return
     }
     const isPost = url.includes("{POSTARGS}")
@@ -107,11 +110,11 @@ export function ToolbarSettings() {
     const icon = editIcon.trim()
     if (!name || !url) return
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      alert("搜索 URL 必须以 http:// 或 https:// 开头")
+      alert(L.urlMustStartWithHttp)
       return
     }
     if (!url.includes("%s") && !url.includes("{POSTARGS}")) {
-      alert("搜索 URL 必须包含 %s 或 {POSTARGS}")
+      alert(L.urlMustContainPlaceholder)
       return
     }
     const isPost = url.includes("{POSTARGS}")
@@ -163,7 +166,7 @@ export function ToolbarSettings() {
   }
 
   const resetToDefaults = () => {
-    if (!confirm("确定要重置为默认配置吗？")) return
+    if (!confirm(L.resetConfirm)) return
     const defaults = storage.getDefaultToolbarConfig()
     save(defaults)
     setBlacklistInput(defaults.blacklist.join("\n"))
@@ -179,7 +182,7 @@ export function ToolbarSettings() {
         onClick={() => setShowSettings((v) => !v)}
         className="w-full px-4 py-2 flex items-center justify-between text-xs text-gray-600 hover:bg-gray-50"
       >
-        <span className="font-medium">🛠️ 浮动菜单设置</span>
+        <span className="font-medium">{L.floatingMenuSettings}</span>
         <span className="text-gray-400">{showSettings ? "▲" : "▼"}</span>
       </button>
 
@@ -193,50 +196,50 @@ export function ToolbarSettings() {
               onChange={(e) => updatePartial({ enabled: e.target.checked })}
               className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
-            <span>启用浮动菜单</span>
+            <span>{L.enableFloatingMenu}</span>
           </label>
 
           {/* Trigger mode */}
           <div className="space-y-1">
-            <span className="text-gray-500">触发方式:</span>
+            <span className="text-gray-500">{L.triggerMode}</span>
             <select
               value={config.triggerMode}
               onChange={(e) => updatePartial({ triggerMode: e.target.value as ToolbarTriggerMode })}
               className="w-full border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="select">选中即弹出</option>
-              <option value="middle-click">点击中键弹出</option>
-              <option value="ctrl">按住 Ctrl + 选中</option>
-              <option value="alt">按住 Alt + 选中</option>
-              <option value="shift">按住 Shift + 选中</option>
+              <option value="select">{L.triggerSelect}</option>
+              <option value="middle-click">{L.triggerMiddleClick}</option>
+              <option value="ctrl">{L.triggerCtrl}</option>
+              <option value="alt">{L.triggerAlt}</option>
+              <option value="shift">{L.triggerShift}</option>
             </select>
           </div>
 
           {/* Layout */}
           <div className="space-y-1">
-            <span className="text-gray-500">布局:</span>
+            <span className="text-gray-500">{L.layout}</span>
             <select
               value={config.layout}
               onChange={(e) => updatePartial({ layout: e.target.value as ToolbarLayout })}
               className="w-full border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="horizontal">水平列表</option>
-              <option value="grid">网格</option>
+              <option value="horizontal">{L.layoutHorizontal}</option>
+              <option value="grid">{L.layoutGrid}</option>
             </select>
           </div>
 
           {/* Tab open mode */}
           <div className="space-y-1">
-            <span className="text-gray-500">打开方式:</span>
+            <span className="text-gray-500">{L.openMode}</span>
             <select
               value={config.tabOpenMode}
               onChange={(e) => updatePartial({ tabOpenMode: e.target.value as TabOpenMode })}
               className="w-full border border-gray-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="new-tab">新标签页</option>
-              <option value="new-background-tab">新后台标签页</option>
-              <option value="current">当前页面</option>
-              <option value="pinned">固定标签页</option>
+              <option value="new-tab">{L.openNewTab}</option>
+              <option value="new-background-tab">{L.openNewBackgroundTab}</option>
+              <option value="current">{L.openCurrent}</option>
+              <option value="pinned">{L.openPinned}</option>
             </select>
           </div>
 
@@ -249,7 +252,7 @@ export function ToolbarSettings() {
                 onChange={(e) => updatePartial({ showAnnotations: e.target.checked })}
                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
-              <span>显示标注按钮</span>
+              <span>{L.showAnnotationButtons}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -258,7 +261,7 @@ export function ToolbarSettings() {
                 onChange={(e) => updatePartial({ showFaviconOnly: e.target.checked })}
                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
-              <span>仅显示网站图标</span>
+              <span>{L.showFaviconOnly}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -267,14 +270,14 @@ export function ToolbarSettings() {
                 onChange={(e) => updatePartial({ autoClose: e.target.checked })}
                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
-              <span>搜索后自动关闭</span>
+              <span>{L.autoCloseAfterSearch}</span>
             </label>
           </div>
 
           {/* Auto-close delay */}
           {config.autoClose && (
             <div className="space-y-1">
-              <span className="text-gray-500">自动关闭延迟: {config.autoCloseDelay / 1000}秒</span>
+              <span className="text-gray-500">{L.autoCloseDelay(config.autoCloseDelay / 1000)}</span>
               <input
                 type="range"
                 min={500}
@@ -285,18 +288,18 @@ export function ToolbarSettings() {
                 className="w-full"
               />
               <div className="flex justify-between text-[10px] text-gray-400">
-                <span>0.5s</span>
-                <span>10s</span>
+                <span>0.5{L.seconds}</span>
+                <span>10{L.seconds}</span>
               </div>
             </div>
           )}
 
           {/* Style */}
           <div className="space-y-2 border border-gray-100 rounded p-2">
-            <span className="text-gray-500 font-medium">外观样式</span>
+            <span className="text-gray-500 font-medium">{L.appearanceStyle}</span>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <span className="text-gray-400">背景色</span>
+                <span className="text-gray-400">{L.backgroundColor}</span>
                 <input
                   type="color"
                   value={config.style.backgroundColor}
@@ -305,7 +308,7 @@ export function ToolbarSettings() {
                 />
               </div>
               <div>
-                <span className="text-gray-400">文字色</span>
+                <span className="text-gray-400">{L.textColor}</span>
                 <input
                   type="color"
                   value={config.style.textColor}
@@ -314,7 +317,7 @@ export function ToolbarSettings() {
                 />
               </div>
               <div>
-                <span className="text-gray-400">圆角 ({config.style.borderRadius}px)</span>
+                <span className="text-gray-400">{L.borderRadius(config.style.borderRadius)}</span>
                 <input
                   type="range"
                   min={0}
@@ -325,7 +328,7 @@ export function ToolbarSettings() {
                 />
               </div>
               <div>
-                <span className="text-gray-400">按钮大小 ({config.style.buttonSize}px)</span>
+                <span className="text-gray-400">{L.buttonSize(config.style.buttonSize)}</span>
                 <input
                   type="range"
                   min={16}
@@ -336,7 +339,7 @@ export function ToolbarSettings() {
                 />
               </div>
               <div>
-                <span className="text-gray-400">间距 ({config.style.gap}px)</span>
+                <span className="text-gray-400">{L.gap(config.style.gap)}</span>
                 <input
                   type="range"
                   min={0}
@@ -347,7 +350,7 @@ export function ToolbarSettings() {
                 />
               </div>
               <div>
-                <span className="text-gray-400">内边距 ({config.style.padding}px)</span>
+                <span className="text-gray-400">{L.padding(config.style.padding)}</span>
                 <input
                   type="range"
                   min={0}
@@ -359,7 +362,7 @@ export function ToolbarSettings() {
               </div>
             </div>
             <div>
-              <span className="text-gray-400">阴影 CSS</span>
+              <span className="text-gray-400">{L.shadowCss}</span>
               <input
                 type="text"
                 value={config.style.shadow}
@@ -371,7 +374,7 @@ export function ToolbarSettings() {
 
           {/* Engines */}
           <div className="space-y-2 border border-gray-100 rounded p-2">
-            <span className="text-gray-500 font-medium">搜索引擎</span>
+            <span className="text-gray-500 font-medium">{L.searchEngines}</span>
             <div className="space-y-1 max-h-40 overflow-y-auto">
               {config.engines.map((engine) => (
                 <div key={engine.id} className="flex items-center gap-1 bg-gray-50 rounded px-2 py-1">
@@ -395,21 +398,21 @@ export function ToolbarSettings() {
                   <button
                     onClick={() => moveEngine(engine.id, -1)}
                     className="text-gray-400 hover:text-gray-600 px-1"
-                    title="上移"
+                    title={L.moveUp}
                   >
                     ↑
                   </button>
                   <button
                     onClick={() => moveEngine(engine.id, 1)}
                     className="text-gray-400 hover:text-gray-600 px-1"
-                    title="下移"
+                    title={L.moveDown}
                   >
                     ↓
                   </button>
                   <button
                     onClick={() => removeEngine(engine.id)}
                     className="text-red-400 hover:text-red-600 px-1"
-                    title="删除"
+                    title={L.delete}
                   >
                     ×
                   </button>
@@ -421,21 +424,21 @@ export function ToolbarSettings() {
                 type="text"
                 value={newEngineName}
                 onChange={(e) => setNewEngineName(e.target.value)}
-                placeholder="名称"
+                placeholder={L.engineNamePlaceholder}
                 className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px]"
               />
               <input
                 type="text"
                 value={newEngineUrl}
                 onChange={(e) => setNewEngineUrl(e.target.value)}
-                placeholder="URL (含 %s 或 {POSTARGS})"
+                placeholder={L.engineUrlPlaceholder}
                 className="flex-[2] border border-gray-200 rounded px-2 py-1 text-[11px]"
               />
               <input
                 type="text"
                 value={newEngineIcon}
                 onChange={(e) => setNewEngineIcon(e.target.value)}
-                placeholder="图标 (emoji/URL)"
+                placeholder={L.engineIconPlaceholder}
                 className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px]"
               />
               <button
@@ -443,16 +446,16 @@ export function ToolbarSettings() {
                 disabled={!newEngineName.trim() || !newEngineUrl.trim()}
                 className="px-2 py-1 bg-blue-600 text-white rounded text-[11px] disabled:opacity-50"
               >
-                添加
+                {L.add}
               </button>
             </div>
           </div>
 
           {/* Blacklist / Whitelist */}
           <div className="space-y-2 border border-gray-100 rounded p-2">
-            <span className="text-gray-500 font-medium">黑白名单</span>
+            <span className="text-gray-500 font-medium">{L.blacklistWhitelist}</span>
             <div>
-              <span className="text-gray-400">黑名单 (每行一个域名，如 example.com)</span>
+              <span className="text-gray-400">{L.blacklist}</span>
               <textarea
                 value={blacklistInput}
                 onChange={(e) => setBlacklistInput(e.target.value)}
@@ -461,7 +464,7 @@ export function ToolbarSettings() {
               />
             </div>
             <div>
-              <span className="text-gray-400">白名单 (留空表示全部允许)</span>
+              <span className="text-gray-400">{L.whitelist}</span>
               <textarea
                 value={whitelistInput}
                 onChange={(e) => setWhitelistInput(e.target.value)}
@@ -473,7 +476,7 @@ export function ToolbarSettings() {
               onClick={applyLists}
               className="px-3 py-1 bg-gray-800 text-white rounded text-[11px] hover:bg-gray-700"
             >
-              应用名单
+              {L.applyLists}
             </button>
           </div>
 
@@ -481,7 +484,7 @@ export function ToolbarSettings() {
             onClick={resetToDefaults}
             className="w-full px-3 py-1.5 border border-red-200 text-red-600 rounded text-[11px] hover:bg-red-50"
           >
-            恢复默认配置
+            {L.resetToDefault}
           </button>
         </div>
       )}

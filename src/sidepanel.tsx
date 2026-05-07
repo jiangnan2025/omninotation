@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import "katex/dist/katex.min.css"
 import "./style.css"
 
+import { initLocale, setLocale, t, getLocale, type Locale } from "@/services/i18n"
+import { exportPageAnnotations, importPageAnnotations } from "@/services/storage"
 import * as storage from "@/services/storage"
-import type { Annotation, Reply, Group, Visibility } from "@/types"
+import type { Annotation, Reply } from "@/types"
 import { AnnotationCard } from "@/components/AnnotationCard"
-import { GroupManager } from "@/components/GroupManager"
 import { ToolbarSettings } from "@/components/ToolbarSettings"
 
 export default function SidePanel() {
+  const [locale, setLocaleState] = useState<Locale>(getLocale)
+  const L = t(locale)
   const [url, setUrl] = useState("")
   const [title, setTitle] = useState("")
   const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -21,9 +24,6 @@ export default function SidePanel() {
   const [highlightColor, setHighlightColor] = useState("rgba(250, 204, 21, 0.3)")
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
-  const [groups, setGroups] = useState<Group[]>([])
-  const [showGroupManager, setShowGroupManager] = useState(false)
-  const [newGroupName, setNewGroupName] = useState("")
   const [pendingEditIds, setPendingEditIds] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState("")
   const [bookmarkTags, setBookmarkTags] = useState<string[]>([])
@@ -110,21 +110,35 @@ export default function SidePanel() {
         setCustomOrder(order.length > 0 ? order : null)
         const color = await storage.getHighlightColor()
         setHighlightColor(color.bg)
-        const gs = await storage.getGroups()
-        setGroups(gs)
         const bookmarks = await storage.getBookmarks()
         const currentBm = bookmarks.find((b) => b.url === tab.url)
         setBookmarked(!!currentBm)
         setBookmarkTime(currentBm?.createdAt || null)
         setBookmarkTags(currentBm?.tags || [])
-        setPageVisibility(currentBm?.visibility || "private")
-        setPageGroupId(currentBm?.groupId)
         await fetchPositionsAndSort(data, order.length > 0 ? order : null)
       }
     } catch (e) {
       console.error("[SidePanel] load error:", e)
     }
   }
+
+  // Initialize locale from storage on mount
+  useEffect(() => {
+    initLocale().then((l) => setLocaleState(l))
+  }, [])
+
+  // Listen for locale changes in storage (from other contexts)
+  useEffect(() => {
+    const listener = (changes: any, area: string) => {
+      if (area !== "local" || !changes["locale_pref"]) return
+      const newLocale = changes["locale_pref"].newValue as Locale
+      if (newLocale === "zh-CN" || newLocale === "en") {
+        setLocaleState(newLocale)
+      }
+    }
+    chrome.storage.onChanged.addListener(listener)
+    return () => chrome.storage.onChanged.removeListener(listener)
+  }, [])
 
   useEffect(() => {
     load()
@@ -289,15 +303,6 @@ export default function SidePanel() {
     setDisplayAnnotations(updater)
   }, [url, annotations])
 
-  const [pageVisibility, setPageVisibility] = useState<Visibility>("private")
-  const [pageGroupId, setPageGroupId] = useState<string | undefined>(undefined)
-
-  const handleVisibilityChange = useCallback(async (visibility: Visibility, groupId?: string) => {
-    await storage.updateBookmarkVisibility(url, visibility, groupId)
-    setPageVisibility(visibility)
-    setPageGroupId(groupId)
-  }, [url])
-
   const handleBookmarkTagAdd = async () => {
     const trimmed = tagInput.trim()
     if (!trimmed || !url) return
@@ -346,7 +351,7 @@ export default function SidePanel() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     if (tab?.id) {
       chrome.tabs.sendMessage(tab.id, { type: "START_STICKY_MODE" }).catch(() => {
-        alert("无法与页面通信，请刷新后重试")
+        alert(L.cannotCommunicate)
       })
     }
   }
@@ -368,24 +373,6 @@ export default function SidePanel() {
     setNewContent("")
     setShowAddForm(false)
     await fetchPositionsAndSort(next, customOrder)
-  }
-
-  const handleCreateGroup = async () => {
-    if (!newGroupName.trim()) return
-    const group: Group = {
-      id: crypto.randomUUID(),
-      name: newGroupName.trim(),
-      members: [{ id: "local-user", name: "Me" }],
-      createdAt: new Date().toISOString()
-    }
-    await storage.saveGroup(group)
-    setGroups((prev) => [...prev, group])
-    setNewGroupName("")
-  }
-
-  const handleDeleteGroup = async (id: string) => {
-    await storage.deleteGroup(id)
-    setGroups((prev) => prev.filter((g) => g.id !== id))
   }
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, id: string) => {
@@ -453,15 +440,50 @@ export default function SidePanel() {
       const text = await file.text()
       const data = JSON.parse(text)
       if (typeof data !== "object" || data === null) {
-        alert("文件格式错误：不是有效的 JSON 对象")
+        alert(L.invalidJsonError)
         return
       }
-      if (!confirm("导入将覆盖当前所有数据，确定继续？")) return
+      if (!confirm(L.importConfirm)) return
       await storage.importAllData(data)
-      alert("导入成功！")
+      alert(L.importSuccess)
       load()
     } catch (e) {
-      alert("导入失败：" + (e instanceof Error ? e.message : String(e)))
+      alert(L.importFailed(e instanceof Error ? e.message : String(e)))
+    }
+  }
+
+  const handleExportPage = async () => {
+    if (!url) return
+    const data = await storage.exportPageAnnotations(url)
+    if (Object.keys(data).length === 0) return
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
+    const urlObj = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = urlObj
+    const safeName = title.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, "_").slice(0, 50) || "page"
+    a.download = `omninotation-${safeName}-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(urlObj)
+  }
+
+  const handleImportPage = async (file: File) => {
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      if (typeof data !== "object" || data === null) {
+        alert(L.invalidJsonError)
+        return
+      }
+      if (!confirm(L.importPageConfirm)) return
+      const ok = await storage.importPageAnnotations(url, data)
+      if (ok) {
+        alert(L.importPageSuccess)
+        load()
+      } else {
+        alert(L.importPageFail)
+      }
+    } catch (e) {
+      alert(L.importFailed(e instanceof Error ? e.message : String(e)))
     }
   }
 
@@ -493,9 +515,9 @@ export default function SidePanel() {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
         <div className="min-w-0 flex-1">
-          <h1 className="text-base font-semibold text-gray-800 truncate">{title || "未命名页面"}</h1>
+          <h1 className="text-base font-semibold text-gray-800 truncate">{title || L.untitledPage}</h1>
           <p className="text-[10px] text-gray-400 truncate">
-            {(() => { try { return decodeURIComponent(url).replace(/^https?:\/\//, "") } catch { return url.replace(/^https?:\/\//, "") } })() || "未选择页面"}
+            {(() => { try { return decodeURIComponent(url).replace(/^https?:\/\//, "") } catch { return url.replace(/^https?:\/\//, "") } })() || L.unselectedPage}
           </p>
         </div>
         <div className="flex flex-col items-end ml-2 gap-1">
@@ -503,7 +525,7 @@ export default function SidePanel() {
             <button
               onClick={() => chrome.runtime.openOptionsPage()}
               className="text-xs text-gray-400 hover:text-blue-600"
-              title="打开仪表盘">
+              title={L.openDashboard}>
               📊
             </button>
             <button
@@ -528,7 +550,7 @@ export default function SidePanel() {
               className={`text-lg leading-none transition-colors ${
                 bookmarked ? "text-yellow-500" : "text-gray-300 hover:text-gray-400"
               }`}
-              title={bookmarked ? "取消收藏" : "收藏此页面"}>
+              title={bookmarked ? L.unbookmark : L.bookmark}>
               {bookmarked ? "⭐" : "☆"}
             </button>
           </div>
@@ -564,7 +586,7 @@ export default function SidePanel() {
                   if (e.key === "Enter") handleBookmarkTagAdd()
                   if (e.key === "Escape") { setShowTagInput(false); setTagInput("") }
                 }}
-                placeholder="标签"
+                placeholder={L.tagPlaceholder}
                 autoFocus
                 className="text-[10px] border border-gray-200 rounded px-1.5 py-0.5 w-20 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
@@ -572,56 +594,22 @@ export default function SidePanel() {
                 onClick={handleBookmarkTagAdd}
                 disabled={!tagInput.trim()}
                 className="text-[10px] text-blue-600 hover:text-blue-800 disabled:text-gray-300">
-                保存
+                {L.save}
               </button>
             </div>
           ) : (
             <button
               onClick={() => setShowTagInput(true)}
               className="text-[10px] text-gray-400 hover:text-blue-600 px-1 py-0.5 rounded border border-dashed border-gray-300 hover:border-blue-300">
-              ＋ 标签
+              {L.addTag}
             </button>
           )}
         </div>
       </div>
 
-      {/* Page visibility */}
-      <div className="px-4 py-1.5 border-b border-gray-100 shrink-0 flex items-center gap-2">
-        <span className="text-[10px] text-gray-400">页面权限:</span>
-        <select
-          value={pageVisibility}
-          onChange={(e) => {
-            const v = e.target.value as Visibility
-            if (v === "group") {
-              const firstGroup = groups[0]?.id
-              handleVisibilityChange(v, firstGroup)
-            } else {
-              handleVisibilityChange(v)
-            }
-          }}
-          className="text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-        >
-          <option value="private">🔒 仅自己</option>
-          <option value="public">🌐 公开</option>
-          <option value="group">👥 群组</option>
-        </select>
-        {pageVisibility === "group" && (
-          <select
-            value={pageGroupId || ""}
-            onChange={(e) => handleVisibilityChange("group", e.target.value || undefined)}
-            className="text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="">选择群组...</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        )}
-      </div>
-
       {/* Color picker */}
       <div className="px-4 py-1.5 border-b border-gray-100 shrink-0 flex items-center gap-2">
-        <span className="text-[10px] text-gray-400">高亮颜色:</span>
+        <span className="text-[10px] text-gray-400">{L.highlightColor}</span>
         {[
           { key: "yellow", color: "bg-yellow-400" },
           { key: "blue", color: "bg-blue-400" },
@@ -648,19 +636,8 @@ export default function SidePanel() {
         ))}
       </div>
 
-      {/* Group manager */}
-      <GroupManager
-        groups={groups}
-        show={showGroupManager}
-        onToggle={() => setShowGroupManager((v) => !v)}
-        newGroupName={newGroupName}
-        onNewGroupNameChange={setNewGroupName}
-        onCreate={handleCreateGroup}
-        onDelete={handleDeleteGroup}
-      />
-
       {/* Toolbar settings */}
-      <ToolbarSettings />
+      <ToolbarSettings locale={locale} />
 
       {/* Add annotation button */}
       <div className="px-4 py-2 border-b border-gray-100 shrink-0">
@@ -669,7 +646,7 @@ export default function SidePanel() {
             <textarea
               value={newContent}
               onChange={(e) => setNewContent(e.target.value)}
-              placeholder="写下你对这个网页的批注（支持完整 Markdown）"
+              placeholder={L.pageNotePlaceholder}
               className="w-full text-xs border border-gray-200 rounded p-2 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
               rows={4}
             />
@@ -680,13 +657,13 @@ export default function SidePanel() {
                   setNewContent("")
                 }}
                 className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 rounded border border-gray-200 hover:bg-gray-50">
-                取消
+                {L.cancel}
               </button>
               <button
                 onClick={handleAddAnnotation}
                 disabled={!newContent.trim()}
                 className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                保存
+                {L.save}
               </button>
             </div>
           </div>
@@ -695,13 +672,13 @@ export default function SidePanel() {
             <button
               onClick={() => setShowAddForm(true)}
               className="flex-1 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors">
-              + 添加批注
+              {L.addNote}
             </button>
             <button
               onClick={handleAddSticky}
               className="px-3 py-1.5 text-xs bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors"
-              title="在页面任意位置添加便签">
-              📌 便签
+              title={L.stickyNoteBtn}>
+              {L.stickyNoteBtn}
             </button>
           </div>
         )}
@@ -713,7 +690,7 @@ export default function SidePanel() {
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜索批注内容、引用或评论..."
+          placeholder={L.searchNotePlaceholder}
           className="w-full text-[11px] border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
       </div>
@@ -722,14 +699,14 @@ export default function SidePanel() {
       <div className="flex items-center justify-between px-4 py-1.5 border-b border-gray-100 shrink-0">
         <span className="text-[10px] text-gray-400">
           {searchQuery.trim()
-            ? `找到 ${displayAnnotations.filter((a) => matchesSearch(a, searchQuery)).length} 条结果`
-            : customOrder ? "自定义排序" : "按页面位置排序"}
+            ? L.searchResults(displayAnnotations.filter((a) => matchesSearch(a, searchQuery)).length)
+            : customOrder ? L.customSort : L.positionSort}
         </span>
         {customOrder && !searchQuery.trim() && (
           <button
             onClick={handleResetOrder}
             className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline">
-            重置为页面顺序
+            {L.resetToPositionSort}
           </button>
         )}
       </div>
@@ -738,9 +715,9 @@ export default function SidePanel() {
           <div className="text-center text-gray-400 text-sm py-8">
             {url
               ? searchQuery.trim()
-                ? "无匹配结果"
-                : "暂无批注，点击上方按钮添加"
-              : "请在浏览器中选择标签页"}
+                ? L.noMatchResults
+                : L.noNotesAddPrompt
+              : L.selectTabPrompt}
           </div>
         )}
         {displayAnnotations.filter((a) => matchesSearch(a, searchQuery)).map((ann) => (
@@ -770,18 +747,68 @@ export default function SidePanel() {
 
       {/* Footer */}
       <div className="px-4 py-2 border-t border-gray-100 shrink-0">
+        <div className="flex items-center justify-between mb-1">
+          {/* Language switcher */}
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-400">{L.languageLabel}:</span>
+            <button
+              onClick={async () => {
+                const next: Locale = locale === "zh-CN" ? "en" : "zh-CN"
+                await setLocale(next)
+                setLocaleState(next)
+              }}
+              className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                locale === "zh-CN"
+                  ? "bg-blue-50 border-blue-300 text-blue-700"
+                  : "bg-gray-50 border-gray-200 text-gray-500"
+              }`}>
+              中文
+            </button>
+            <button
+              onClick={async () => {
+                const next: Locale = locale === "zh-CN" ? "en" : "zh-CN"
+                await setLocale(next)
+                setLocaleState(next)
+              }}
+              className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                locale === "en"
+                  ? "bg-blue-50 border-blue-300 text-blue-700"
+                  : "bg-gray-50 border-gray-200 text-gray-500"
+              }`}>
+              EN
+            </button>
+          </div>
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-[10px] text-gray-400">
-            本页共 {displayAnnotations.length} 条批注
+            {L.pageNoteCount(displayAnnotations.length)}
           </span>
           <div className="flex gap-2">
             <button
-              onClick={handleExport}
+              onClick={handleExportPage}
               className="text-[10px] text-gray-500 hover:text-blue-600 hover:underline">
-              📤 导出
+              {L.exportPage}
             </button>
             <label className="text-[10px] text-gray-500 hover:text-blue-600 hover:underline cursor-pointer">
-              📥 导入
+              {L.importPage}
+              <input
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) handleImportPage(file)
+                  e.target.value = ""
+                }}
+              />
+            </label>
+            <button
+              onClick={handleExport}
+              className="text-[10px] text-gray-500 hover:text-blue-600 hover:underline">
+              {L.exportBtn}
+            </button>
+            <label className="text-[10px] text-gray-500 hover:text-blue-600 hover:underline cursor-pointer">
+              {L.importBtn}
               <input
                 type="file"
                 accept=".json"

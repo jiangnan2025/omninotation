@@ -12,12 +12,16 @@
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
-  <a href="#development">Development</a>
+  <a href="#development">Development</a> •
+  <a href="#changelog">Changelog</a>
 </p>
 
 ---
 
 **English** | [中文](#中文介绍)
+
+> **Latest Update** — See what's new in the [Changelog](#changelog).
+
 
 ## Overview
 
@@ -51,6 +55,10 @@ Key highlights:
 | **Bookmark Folders** | Organize bookmarked pages into nested folders via the Options dashboard. |
 | **Global Search** | Search across all annotations, quotes, replies, and tags from the bookmark dashboard. |
 | **SPA Support** | MutationObserver with smart re-rendering — only re-renders when highlight count mismatch is detected. |
+| **Selection Toolbar** | Select text on any page to pop up a floating toolbar with annotate, comment, and multi-engine search options. |
+| **Multi-Engine Search** | Search selected text via Google, Bing, Baidu, DuckDuckGo, GitHub, Wikipedia, and more. Supports custom search engine list and new-tab control. |
+| **Copy Link Name** | Right-click a hyperlink to copy its display text via the "Copy Link Name" context menu. |
+| **Quick Delete Annotations** | Delete all highlights on the current page with a single action from the side panel. |
 | **Export / Import** | Backup and restore all your data as JSON. |
 
 ## Installation
@@ -161,10 +169,12 @@ omninotation/
 │   │   ├── MarkdownContent.tsx   # Markdown + KaTeX renderer
 │   │   ├── ReplyThread.tsx       # Nested reply thread component
 │   │   ├── GroupManager.tsx      # Group management panel
+│   │   ├── SelectionToolbar.tsx  # Floating toolbar on text selection (annotate / search)
 │   │   └── ActionMenu.tsx        # Legacy floating toolbar (unused)
 │   ├── services/
 │   │   ├── storage.ts            # Chrome storage abstraction
 │   │   ├── anchor.ts             # dom-anchor-text-quote wrapper
+│   │   ├── highlights.ts         # DOM highlight rendering & lifecycle
 │   │   └── config.ts             # Domain-specific config
 │   ├── types/
 │   │   └── index.ts              # TypeScript interfaces
@@ -262,3 +272,21 @@ npm run build
 ### 技术栈
 
 Plasmo + React 18 + TypeScript + Tailwind CSS + marked + KaTeX + dom-anchor-text-quote
+
+---
+
+<a name="changelog"></a>
+
+## Changelog
+
+###  — 浮动工具栏 & 标注 / 搜索增强
+
+- **SelectionToolbar（浮动工具栏）**：选中文字后弹出工具栏，提供标注、批注及多引擎搜索入口。
+  - 支持自定义搜索引擎列表与排序。
+  - 支持搜索引擎触发条件（黑白名单域名匹配）。
+  - 支持在新标签页或当前标签页打开搜索结果。
+  - 图标横排整齐排列，支持自定义图标。
+  - 支持消失延迟与鼠标悬停保持显示。
+- **Copy Link Name**：右键超链接时新增「Copy Link Name」选项，一键复制链接文字。
+- **Quick Delete Annotations**：支持快捷删除当前页面全部标注。
+- **Multi-Engine Search**：内置 Google / Bing 等搜索引擎，可自行扩展。

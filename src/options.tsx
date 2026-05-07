@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import "katex/dist/katex.min.css"
 import "./style.css"
 
+import { detectLocale, t, type Locale } from "@/services/i18n"
 import * as storage from "@/services/storage"
-import type { Annotation, AnnotationEntry, Bookmark, BookmarkFolder, Visibility } from "@/types"
+import type { Annotation, AnnotationEntry, Bookmark, BookmarkFolder } from "@/types"
 import { MarkdownContent } from "@/components/MarkdownContent"
 
 // ===== Helpers =====
@@ -38,12 +39,12 @@ function getDescendantFolderIds(folders: BookmarkFolder[], parentId: string): st
   return result
 }
 
-function getFolderPath(folderId: string | undefined, folders: BookmarkFolder[]): string {
-  if (!folderId) return "所有收藏"
+function getFolderPath(folderId: string | undefined, folders: BookmarkFolder[], L: ReturnType<typeof t>): string {
+  if (!folderId) return L.allBookmarksFolder
   const folder = folders.find((f) => f.id === folderId)
-  if (!folder) return "所有收藏"
+  if (!folder) return L.allBookmarksFolder
   if (folder.parentId) {
-    return getFolderPath(folder.parentId, folders) + " / " + folder.name
+    return getFolderPath(folder.parentId, folders, L) + " / " + folder.name
   }
   return folder.name
 }
@@ -115,13 +116,14 @@ function FolderTreeItem({
 }
 
 export default function OptionsPage() {
+  const locale = useRef<Locale>(detectLocale()).current
+  const L = t(locale)
   const [entries, setEntries] = useState<AnnotationEntry[]>([])
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [folders, setFolders] = useState<BookmarkFolder[]>([])
   const [selectedFolderId, setSelectedFolderId] = useState<string | undefined>(undefined)
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set())
   const [query, setQuery] = useState("")
-  const [visibility, setVisibility] = useState<Visibility | "all">("all")
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -152,13 +154,6 @@ export default function OptionsPage() {
 
   const filteredEntries = useMemo(() => {
     let result = storage.searchAnnotations(entries, query)
-    // Filter by bookmark visibility
-    if (visibility !== "all") {
-      const allowedUrls = new Set(
-        bookmarks.filter((b) => b.visibility === visibility).map((b) => b.url)
-      )
-      result = result.filter((e) => allowedUrls.has(e.url))
-    }
     // Filter by selected folder
     if (selectedFolderId) {
       const folderIds = getDescendantFolderIds(folders, selectedFolderId)
@@ -181,7 +176,7 @@ export default function OptionsPage() {
       result = result.filter((e) => taggedUrls.has(e.url))
     }
     return result
-  }, [entries, bookmarks, folders, query, visibility, selectedFolderId, selectedTag])
+  }, [entries, bookmarks, folders, query, selectedFolderId, selectedTag])
 
   const allTags = useMemo(() => {
     const tags = new Set<string>()
@@ -253,7 +248,7 @@ export default function OptionsPage() {
   }
 
   const handleDeleteFolder = async (id: string) => {
-    if (!confirm("确定删除此文件夹？其中的收藏将移至根目录。")) return
+    if (!confirm(L.deleteFolderConfirm)) return
     await storage.deleteBookmarkFolder(id)
     setFolders((prev) => prev.filter((f) => f.id !== id))
     const bms = await storage.getBookmarks()
@@ -272,13 +267,6 @@ export default function OptionsPage() {
     )
   }
 
-  const visibilityLabel: Record<Visibility | "all", string> = {
-    all: "全部",
-    private: "🔒 仅自己",
-    public: "🌐 公开",
-    group: "👥 群组"
-  }
-
   const rootFolders = buildTree(folders)
 
   return (
@@ -287,19 +275,19 @@ export default function OptionsPage() {
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between mb-3">
-            <h1 className="text-xl font-bold text-gray-800">OmniNotation 收藏夹</h1>
+            <h1 className="text-xl font-bold text-gray-800">{L.bookmarksTitle}</h1>
             <button
               onClick={load}
               className="text-xs text-blue-600 hover:text-blue-800 hover:underline">
-              🔄 刷新
+              {L.refresh}
             </button>
           </div>
 
           {/* Stats */}
           <div className="flex gap-4 text-xs text-gray-500 mb-3">
-            <span>共 {bookmarks.length} 个收藏</span>
-            <span>共 {countTotalAnnotations(entries)} 条批注</span>
-            <span>{folders.length} 个文件夹</span>
+            <span>{L.totalBookmarks(bookmarks.length)}</span>
+            <span>{L.totalAnnotations(countTotalAnnotations(entries))}</span>
+            <span>{L.folderCount(folders.length)}</span>
           </div>
 
           {/* Search */}
@@ -308,25 +296,15 @@ export default function OptionsPage() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索批注内容、引用或评论..."
+              placeholder={L.searchPlaceholder}
               className="flex-1 text-sm border border-gray-200 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <select
-              value={visibility}
-              onChange={(e) => setVisibility(e.target.value as Visibility | "all")}
-              className="text-sm border border-gray-200 rounded px-2 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">{visibilityLabel.all}</option>
-              <option value="private">{visibilityLabel.private}</option>
-              <option value="public">{visibilityLabel.public}</option>
-              <option value="group">{visibilityLabel.group}</option>
-            </select>
           </div>
 
           {/* Tag filter */}
           {allTags.length > 0 && (
             <div className="flex items-center flex-wrap gap-1.5 mt-2">
-              <span className="text-[11px] text-gray-400">标签:</span>
+              <span className="text-[11px] text-gray-400">{L.tagLabel}</span>
               <button
                 onClick={() => setSelectedTag(null)}
                 className={`text-[11px] px-2 py-0.5 rounded-full border ${
@@ -334,7 +312,7 @@ export default function OptionsPage() {
                     ? "bg-blue-100 border-blue-300 text-blue-700"
                     : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
                 }`}>
-                全部
+                {L.filterAll}
               </button>
               {allTags.map((tag) => (
                 <button
@@ -359,11 +337,11 @@ export default function OptionsPage() {
         <div className="w-64 shrink-0">
           <div className="bg-white rounded-lg border border-gray-200 p-2">
             <div className="flex items-center justify-between mb-2 px-2">
-              <span className="text-xs font-medium text-gray-500">文件夹</span>
+              <span className="text-xs font-medium text-gray-500">{L.allBookmarksFolder.replace("📂 ", "").replace("📁 ", "")}</span>
               <button
                 onClick={() => setShowNewFolder(true)}
                 className="text-[11px] text-blue-600 hover:text-blue-800 hover:underline">
-                ＋ 新建
+                {L.newFolder}
               </button>
             </div>
 
@@ -376,7 +354,7 @@ export default function OptionsPage() {
               }`}
               onClick={() => setSelectedFolderId(undefined)}>
               <span className="w-4" />
-              <span>📂 所有收藏</span>
+              <span>{L.allBookmarksFolder}</span>
             </div>
 
             {/* Folder tree */}
@@ -406,7 +384,7 @@ export default function OptionsPage() {
                 <input
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
-                  placeholder="文件夹名称"
+                  placeholder={L.folderNamePlaceholder}
                   autoFocus
                   className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
@@ -414,7 +392,7 @@ export default function OptionsPage() {
                   value={newFolderParent || ""}
                   onChange={(e) => setNewFolderParent(e.target.value || undefined)}
                   className="w-full text-xs border border-gray-200 rounded px-2 py-1 bg-white">
-                  <option value="">根目录</option>
+                  <option value="">{L.rootDirectory}</option>
                   {folders.map((f) => (
                     <option key={f.id} value={f.id}>{f.name}</option>
                   ))}
@@ -423,13 +401,13 @@ export default function OptionsPage() {
                   <button
                     onClick={() => { setShowNewFolder(false); setNewFolderName("") }}
                     className="text-[10px] text-gray-500 hover:text-gray-700 px-2 py-0.5">
-                    取消
+                    {L.cancel}
                   </button>
                   <button
                     onClick={handleCreateFolder}
                     disabled={!newFolderName.trim()}
                     className="text-[10px] bg-blue-600 text-white rounded px-2 py-0.5 disabled:opacity-50">
-                    创建
+                    {L.create}
                   </button>
                 </div>
               </div>
@@ -441,19 +419,19 @@ export default function OptionsPage() {
         <div className="flex-1 min-w-0">
           {/* Breadcrumb */}
           <div className="text-xs text-gray-500 mb-2">
-            {getFolderPath(selectedFolderId, folders)}
+            {getFolderPath(selectedFolderId, folders, L)}
             {selectedTag && (
-              <span className="ml-2 text-amber-600">标签: {selectedTag}</span>
+              <span className="ml-2 text-amber-600">{L.tagLabel} {selectedTag}</span>
             )}
           </div>
 
           {loading && (
-            <div className="text-center text-gray-400 py-12">加载中...</div>
+            <div className="text-center text-gray-400 py-12">{L.loading}</div>
           )}
 
           {!loading && filteredEntries.length === 0 && (
             <div className="text-center text-gray-400 py-12">
-              {bookmarks.length === 0 ? "暂无收藏" : "无匹配结果"}
+              {bookmarks.length === 0 ? L.noBookmarks : L.noMatchResults}
             </div>
           )}
 
@@ -493,8 +471,8 @@ export default function OptionsPage() {
                       value={bm?.folderId || ""}
                       onChange={(e) => handleMoveToFolder(entry.url, e.target.value || undefined)}
                       className="text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white"
-                      title="移动到文件夹">
-                      <option value="">根目录</option>
+                      title={L.allBookmarksFolder}>
+                      <option value="">{L.rootDirectory}</option>
                       {folders.map((f) => (
                         <option key={f.id} value={f.id}>{f.name}</option>
                       ))}
@@ -503,11 +481,11 @@ export default function OptionsPage() {
                     <button
                       onClick={(e) => { e.stopPropagation(); openUrl(entry.url) }}
                       className="text-[11px] text-blue-600 hover:text-blue-800 hover:underline"
-                      title="在新标签页打开">
-                      打开
+                      title={L.open}>
+                      {L.open}
                     </button>
                     <span className="text-[11px] text-gray-400">
-                      {entry.annotations.length} 条批注
+                      {L.annotationsCount(entry.annotations.length)}
                     </span>
                     <button
                       onClick={() => toggleUrl(entry.url)}
@@ -526,19 +504,22 @@ export default function OptionsPage() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
                               {ann.position
-                                ? "📌 便签"
+                                ? `📌 ${L.stickyNote}`
                                 : ann.data.markStyle === "underline"
-                                ? "U̲ 下划线"
+                                ? `U̲ ${L.markUnderline}`
                                 : ann.data.markStyle === "strikethrough"
-                                ? "S̶ 删除"
+                                ? `S̶ ${L.markStrikethrough}`
                                 : ann.data.markStyle === "squiggly"
-                                ? "〰 波浪"
-                                : "▌ 高亮"}
+                                ? `〰 ${L.markSquiggly}`
+                                : `▌ ${L.markHighlight}`}
                             </span>
 
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-gray-100 text-gray-600">
+                              👤 {ann.author.name}
+                            </span>
                             {ann.status === "resolved" && (
                               <span className="text-[10px] px-1 py-0.5 rounded bg-green-100 text-green-700">
-                                ✓ 已解决
+                                ✓ {L.resolved}
                               </span>
                             )}
                             <span className="text-[10px] text-gray-400">
@@ -549,12 +530,12 @@ export default function OptionsPage() {
                             <button
                               onClick={() => openAndScroll(entry.url, ann.id)}
                               className="text-[11px] text-blue-600 hover:text-blue-800 hover:underline">
-                              跳转
+                              {L.jump}
                             </button>
                             <button
                               onClick={() => handleDeleteAnnotation(entry.url, ann.id)}
                               className="text-[11px] text-red-400 hover:text-red-600 hover:underline">
-                              删除
+                              {L.delete}
                             </button>
                           </div>
                         </div>
@@ -569,7 +550,7 @@ export default function OptionsPage() {
 
                         {countReplies(ann) > 0 && (
                           <p className="text-[10px] text-gray-400 mt-1">
-                            {countReplies(ann)} 条回复
+                            {L.replyCount(countReplies(ann))}
                           </p>
                         )}
                       </div>
@@ -580,9 +561,9 @@ export default function OptionsPage() {
             )
           })}
 
-          {!loading && filteredEntries.length > 0 && (query || visibility !== "all" || selectedTag || selectedFolderId) && (
+          {!loading && filteredEntries.length > 0 && (query || selectedTag || selectedFolderId) && (
             <div className="text-center text-[11px] text-gray-400 py-4">
-              找到 {countTotalAnnotations(filteredEntries)} 条批注
+              {L.foundAnnotations(countTotalAnnotations(filteredEntries))}
             </div>
           )}
         </div>

@@ -4,6 +4,7 @@ import * as anchor from "@/services/anchor"
 import { getDomainConfig } from "@/services/config"
 import { rangeToMarkdown } from "@/services/htmlToMarkdown"
 import * as storage from "@/services/storage"
+import { detectLocale, t, type Locale } from "@/services/i18n"
 import type { MarkStyle } from "@/types"
 
 export interface SelectionInfo {
@@ -12,12 +13,15 @@ export interface SelectionInfo {
   rect: DOMRect
 }
 
-const MARK_STYLES: { key: MarkStyle; label: string; icon: string }[] = [
-  { key: "highlight", label: "高亮", icon: "▌" },
-  { key: "underline", label: "下划线", icon: "U̲" },
-  { key: "strikethrough", label: "删除线", icon: "S̶" },
-  { key: "squiggly", label: "波浪线", icon: "〰" }
-]
+function getMarkStyles(locale: Locale) {
+  const L = t(locale)
+  return [
+    { key: "highlight" as MarkStyle, label: L.highlight, icon: "▌" },
+    { key: "underline" as MarkStyle, label: L.underline, icon: "U̲" },
+    { key: "strikethrough" as MarkStyle, label: L.strikethrough, icon: "S̶" },
+    { key: "squiggly" as MarkStyle, label: L.squiggly, icon: "〰" }
+  ]
+}
 
 export function ActionMenu({
   selection,
@@ -29,6 +33,9 @@ export function ActionMenu({
   onClose: () => void
 }) {
   const formType = "comment"
+  const locale = useRef<Locale>(detectLocale()).current
+  const L = t(locale)
+  const MARK_STYLES = getMarkStyles(locale)
   const [content, setContent] = useState("")
   const [markStyle, setMarkStyle] = useState<MarkStyle>(defaultMarkStyle)
   const [authorName, setAuthorName] = useState("Me")
@@ -53,7 +60,7 @@ export function ActionMenu({
     const root = anchor.getRootElement(config.rootSelector)
     const selector = anchor.describeRange(root, selection.range)
     if (!selector) {
-      alert("定位失败，请尝试选择更多上下文。")
+      alert(L.anchorFailed)
       return
     }
 
@@ -95,12 +102,12 @@ export function ActionMenu({
           top: Math.max(8, pos.y)
         }}>
         <div data-omninotation-menu className="bg-white rounded-lg shadow-xl border border-gray-200 p-3 w-72 pointer-events-auto">
-        <div className="text-[10px] text-gray-400 mb-1">支持 Markdown 格式</div>
+        <div className="text-[10px] text-gray-400 mb-1">{L.markdownSupported}</div>
         <textarea
           ref={textareaRef}
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder={formType === "comment" ? "添加批注..." : "提议修改..."}
+          placeholder={formType === "comment" ? L.addAnnotationPlaceholder : L.proposeEditPlaceholder}
           className="w-full text-sm border border-gray-200 rounded p-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           rows={3}
         />
@@ -126,19 +133,19 @@ export function ActionMenu({
             value={authorName}
             onChange={(e) => setAuthorName(e.target.value)}
             className="text-xs border border-gray-200 rounded px-2 py-1 w-24 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            placeholder="名称"
+            placeholder={L.name}
           />
           <div className="flex gap-2">
             <button
               onClick={() => { console.log("[ActionMenu] cancel button calling onClose"); onClose() }}
               className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">
-              取消
+              {L.cancel}
             </button>
             <button
               onClick={handleSave}
               disabled={!content.trim() && !selection.text.trim()}
               className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-              保存
+              {L.save}
             </button>
           </div>
         </div>

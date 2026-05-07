@@ -5,6 +5,7 @@ import cssText from "data-text:~/style.css"
 
 import { SelectionToolbar } from "@/components/SelectionToolbar"
 import * as anchor from "@/services/anchor"
+import { detectLocale, t, type Locale } from "@/services/i18n"
 import { getDomainConfig, shouldActivate } from "@/services/config"
 import {
   HIGHLIGHT_CLASS,
@@ -72,6 +73,7 @@ export default function OmniNotationOverlay() {
   const pendingMiddleClick = useRef(false)
   const hasSelectionOnMouseDown = useRef(false)
   const hoverShowTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isMouseDown = useRef(false)
 
   function isToolbarEnabledForUrl(targetUrl: string, cfg: ToolbarConfig | null): boolean {
     if (!cfg || !cfg.enabled) return false
@@ -109,7 +111,7 @@ export default function OmniNotationOverlay() {
 
         if (chrome.runtime.lastError) {
           isRendering.current = false
-          console.warn("[OmniNotation] 扩展已重新加载，请刷新页面以继续使用。")
+          console.warn(`[OmniNotation] ${t(detectLocale()).extensionReloaded}`)
           return
         }
 
@@ -138,7 +140,7 @@ export default function OmniNotationOverlay() {
     } catch (e: any) {
       isRendering.current = false
       if (e?.message?.includes("Extension context invalidated")) {
-        console.warn("[OmniNotation] 扩展已重新加载，请刷新页面以继续使用。")
+        console.warn(`[OmniNotation] ${t(detectLocale()).extensionReloaded}`)
       } else {
         console.warn("[OmniNotation] Render error:", e)
       }
@@ -259,8 +261,9 @@ export default function OmniNotationOverlay() {
     const handleMouseUp = (e: MouseEvent) => {
       const host = document.getElementById(ROOT_CONTAINER_ID)
       if (host && e.target === host) return
+      // Only respond to left mouse button release
+      if (e.button !== 0) return
 
-      handleSelectionChange()
       const cfg = toolbarConfigRef.current
       if (!cfg || !cfg.enabled) return
 
@@ -271,13 +274,23 @@ export default function OmniNotationOverlay() {
         }
         return
       }
-      if (cfg.triggerMode === "select") { showToolbarIfAllowed(); return }
+
+      // Delay to let the browser finalize the selection range/rect
+      const showAfterSettle = () => {
+        const sel = window.getSelection()
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
+        const range = sel.getRangeAt(0)
+        const text = sel.toString().trim()
+        if (text) setPopupSelection({ text, range, rect: range.getBoundingClientRect() })
+      }
+
+      if (cfg.triggerMode === "select") { setTimeout(showAfterSettle, 10); return }
 
       const mod = modifierState.current
       if ((cfg.triggerMode === "ctrl" && mod.ctrl) ||
           (cfg.triggerMode === "alt" && mod.alt) ||
           (cfg.triggerMode === "shift" && mod.shift)) {
-        showToolbarIfAllowed()
+        setTimeout(showAfterSettle, 10)
       }
     }
 
@@ -292,28 +305,48 @@ export default function OmniNotationOverlay() {
     document.addEventListener("mouseup", handleMouseUp)
     document.addEventListener("mousedown", handleMouseDown)
 
-    // Hover re-show
+    // Hover re-show — only when mouse button is NOT pressed (prevents toolbar during drag selection)
     const handleMouseMove = (e: MouseEvent) => {
       if (popupSelectionRef.current) return
+      if (isMouseDown.current) return                          // ← skip while selecting
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
-      const rect = sel.getRangeAt(0).getBoundingClientRect()
+      let rect: DOMRect
+      try {
+        rect = sel.getRangeAt(0).getBoundingClientRect()
+      } catch { return }
+      // Ignore zero-size rects (selection not yet rendered)
+      if (rect.width === 0 && rect.height === 0) return
       const inRect = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom
       if (inRect) {
         if (hoverShowTimer.current) return
         hoverShowTimer.current = setTimeout(() => {
           hoverShowTimer.current = null
+          if (isMouseDown.current) return                      // ← double-check before showing
           const currentSel = window.getSelection()
           if (!currentSel || currentSel.isCollapsed) return
           const r = currentSel.getRangeAt(0)
           const t = currentSel.toString().trim()
           if (t) setPopupSelection({ text: t, range: r, rect: r.getBoundingClientRect() })
-        }, 80)
+        }, 150)
       } else {
         if (hoverShowTimer.current) { clearTimeout(hoverShowTimer.current); hoverShowTimer.current = null }
       }
     }
     document.addEventListener("mousemove", handleMouseMove)
+
+    // Track global mouse button state so hover-re-show never fires during a drag
+    const handleGlobalMouseDown = (e: MouseEvent) => {
+      isMouseDown.current = true
+      // Clear any pending hover timer immediately on mouse down
+      if (hoverShowTimer.current) {
+        clearTimeout(hoverShowTimer.current)
+        hoverShowTimer.current = null
+      }
+    }
+    const handleGlobalMouseUp = () => { isMouseDown.current = false }
+    document.addEventListener("mousedown", handleGlobalMouseDown, true)
+    document.addEventListener("mouseup", handleGlobalMouseUp, true)
 
     // Context menu: track right-clicked annotation
     const handleContextMenu = (e: MouseEvent) => {
@@ -359,7 +392,7 @@ export default function OmniNotationOverlay() {
           stickyMode.current = true
           document.body.style.cursor = "crosshair"
           const tooltip = document.createElement("div")
-          tooltip.textContent = "点击页面任意位置放置便签"
+          tooltip.textContent = t(detectLocale()).stickyModeTooltip
           tooltip.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1f2937;color:white;padding:8px 16px;border-radius:8px;font-size:13px;z-index:2147483647;pointer-events:none;white-space:nowrap;"
           document.body.appendChild(tooltip)
           stickyTooltip.current = tooltip
@@ -438,6 +471,8 @@ export default function OmniNotationOverlay() {
       chrome.storage?.onChanged?.removeListener(storageListener)
       chrome.runtime?.onMessage?.removeListener(messageListener)
       document.removeEventListener("click", handleStickyClick, true)
+      document.removeEventListener("mousedown", handleGlobalMouseDown, true)
+      document.removeEventListener("mouseup", handleGlobalMouseUp, true)
       document.removeEventListener("selectionchange", handleSelectionChange)
       document.removeEventListener("mouseup", handleMouseUp)
       document.removeEventListener("mousedown", handleMouseDown)

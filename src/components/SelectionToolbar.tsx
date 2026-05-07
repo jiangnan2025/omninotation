@@ -4,6 +4,7 @@ import * as anchor from "@/services/anchor"
 import { getDomainConfig } from "@/services/config"
 import { rangeToMarkdown } from "@/services/htmlToMarkdown"
 import * as storage from "@/services/storage"
+import { detectLocale, t, type Locale } from "@/services/i18n"
 import type { MarkStyle, ToolbarConfig, ToolbarSearchEngine } from "@/types"
 
 // ========================
@@ -105,12 +106,15 @@ async function executeSearch(request: SearchRequest, mode: ToolbarConfig["tabOpe
 // Annotation mark styles
 // ========================
 
-const MARK_STYLES: { key: MarkStyle; label: string; icon: string }[] = [
-  { key: "highlight", label: "高亮", icon: "▌" },
-  { key: "underline", label: "下划线", icon: "U̲" },
-  { key: "strikethrough", label: "删除线", icon: "S̶" },
-  { key: "squiggly", label: "波浪线", icon: "〰" }
-]
+function getMarkStyles(locale: Locale): { key: MarkStyle; label: string; icon: string }[] {
+  const L = t(locale)
+  return [
+    { key: "highlight", label: L.highlight, icon: "▌" },
+    { key: "underline", label: L.underline, icon: "U̲" },
+    { key: "strikethrough", label: L.strikethrough, icon: "S̶" },
+    { key: "squiggly", label: L.squiggly, icon: "〰" }
+  ]
+}
 
 // ========================
 // Component
@@ -136,7 +140,10 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
   const [markStyle, setMarkStyle] = useState<MarkStyle>("highlight")
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isOverSelection = useRef(false)
+  const locale = useRef<Locale>(detectLocale()).current
 
+  const L = t(locale)
+  const MARK_STYLES = getMarkStyles(locale)
   const style = config.style
 
   // Auto-close after configured delay unless hovered
@@ -240,7 +247,7 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
       const root = anchor.getRootElement(cfg.rootSelector)
       const selector = anchor.describeRange(root, range)
       if (!selector) {
-        alert("定位失败，请尝试选择更多上下文。")
+        alert(L.anchorFailed)
         return
       }
 
@@ -322,7 +329,7 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
     return (
       <button
         key={engine.id}
-        title={config.showFaviconOnly ? engine.name : `在 ${engine.name} 搜索`}
+        title={config.showFaviconOnly ? engine.name : L.searchIn(engine.name)}
         onClick={() => handleSearch(engine)}
         style={buttonStyle}
         onMouseEnter={clearCloseTimer}
@@ -361,22 +368,22 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
         onMouseLeave={startCloseTimer}
         onMouseDown={(e) => e.preventDefault()}
       >
-        <div className="text-xs opacity-60 mb-1">添加批注</div>
+        <div className="text-xs opacity-60 mb-1">{L.addComment}</div>
         <textarea
           value={comment}
           onChange={(e) => setComment(e.target.value)}
-          placeholder="输入批注内容..."
+          placeholder={L.commentPlaceholder}
           className="w-full text-xs border border-gray-200 rounded p-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           style={{ backgroundColor: "white", color: "#374151" }}
           rows={3}
           autoFocus
         />
         <div className="flex gap-1 mb-2">
-          {MARK_STYLES.map(({ key, label, icon }) => (
+          {MARK_STYLES.map(({ key, label: lbl, icon }) => (
             <button
               key={key}
               onClick={() => setMarkStyle(key)}
-              title={label}
+              title={lbl}
               className={`flex-1 text-xs py-1 rounded border transition-colors ${
                 markStyle === key
                   ? "bg-blue-50 border-blue-300 text-blue-700"
@@ -392,14 +399,14 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
             onClick={() => setShowCommentForm(false)}
             className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-50"
           >
-            返回
+            {L.back}
           </button>
           <button
             onClick={() => saveAnnotation(markStyle, comment)}
             disabled={!comment.trim()}
             className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            保存
+            {L.save}
           </button>
         </div>
       </div>
@@ -417,10 +424,10 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
       {/* Annotation mark styles */}
       {config.showAnnotations && (
         <>
-          {MARK_STYLES.map(({ key, label, icon }) => (
+          {MARK_STYLES.map(({ key, label: lbl, icon }) => (
             <button
               key={key}
-              title={label}
+              title={lbl}
               onClick={() => saveAnnotation(key)}
               style={buttonStyle}
             >
@@ -428,7 +435,7 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
             </button>
           ))}
           <button
-            title="添加批注"
+            title={L.addComment}
             onClick={() => setShowCommentForm(true)}
             style={buttonStyle}
           >

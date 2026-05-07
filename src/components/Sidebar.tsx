@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import type { Annotation } from "@/types"
+import { detectLocale, t } from "@/services/i18n"
 import { MarkdownContent } from "./MarkdownContent"
 
 interface SidebarProps {
@@ -10,6 +11,8 @@ interface SidebarProps {
 
 export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
   const [filter, setFilter] = useState<"all" | "comment" | "edit">("all")
+  const locale = useRef(detectLocale()).current
+  const L = t(locale)
 
   const filtered =
     filter === "all" ? annotations : annotations.filter((a) => a.data.type === filter)
@@ -23,7 +26,7 @@ export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
         <button
           onClick={onClose}
           className="text-gray-400 hover:text-gray-600 text-lg leading-none"
-          aria-label="关闭侧边栏">
+          aria-label={L.closeSidebar}>
           ×
         </button>
       </div>
@@ -38,14 +41,14 @@ export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
                 ? "bg-blue-600 text-white border-blue-600"
                 : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
             }`}>
-            {f === "all" ? "全部" : f === "comment" ? "批注" : "修改"}
+            {f === "all" ? L.filterAll : f === "comment" ? L.filterComment : L.filterEdit}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {filtered.length === 0 && (
-          <div className="text-center text-gray-400 text-sm py-8">暂无批注</div>
+          <div className="text-center text-gray-400 text-sm py-8">{L.noAnnotations}</div>
         )}
         {filtered.map((ann) => (
           <div
@@ -58,7 +61,7 @@ export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
                     ? "bg-amber-100 text-amber-700"
                     : "bg-blue-100 text-blue-700"
                 }`}>
-                {ann.data.type === "comment" ? "批注" : "修改"}
+                {ann.data.type === "comment" ? L.filterComment : L.filterEdit}
               </span>
               <span className="text-[10px] text-gray-400">{ann.author.name}</span>
             </div>
@@ -74,7 +77,7 @@ export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
                       navigator.clipboard.writeText(ann.quote || "").catch(() => {})
                     }}
                     className="absolute top-0 right-0 text-[10px] text-gray-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity px-1 py-0.5 bg-white/80 rounded"
-                    title="复制">
+                    title={L.copy}>
                     📋
                   </button>
                 </div>
@@ -84,7 +87,7 @@ export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
               <button
                 onClick={() => onDelete(ann.id)}
                 className="text-xs text-red-500 hover:text-red-700 hover:underline">
-                删除
+                {L.delete}
               </button>
             </div>
           </div>
@@ -92,7 +95,7 @@ export function Sidebar({ annotations, onDelete, onClose }: SidebarProps) {
       </div>
 
       <div className="px-4 py-2 border-t border-gray-100 text-[10px] text-gray-400 text-center">
-        本页共 {annotations.length} 条批注
+        {L.annotationCount(annotations.length)}
       </div>
     </div>
   )
