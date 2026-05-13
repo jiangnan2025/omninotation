@@ -76,7 +76,6 @@ export function ActionMenu({
     })
 
     setContent("")
-    console.log("[ActionMenu] handleSave calling onClose")
     onClose()
   }, [selection, content, markStyle, authorName, onClose])
 
@@ -137,7 +136,7 @@ export function ActionMenu({
           />
           <div className="flex gap-2">
             <button
-              onClick={() => { console.log("[ActionMenu] cancel button calling onClose"); onClose() }}
+              onClick={() => onClose()}
               className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">
               {L.cancel}
             </button>

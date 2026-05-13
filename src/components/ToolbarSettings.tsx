@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react"
 
 import * as storage from "@/services/storage"
+import { getLocalIconUrl } from "@/services/color"
 import { detectLocale, t, type Locale } from "@/services/i18n"
 import type { ToolbarConfig, ToolbarSearchEngine, ToolbarTriggerMode, ToolbarLayout, TabOpenMode } from "@/types"
 
 function getFaviconUrl(urlTemplate: string): string {
   try {
     const domain = new URL(urlTemplate.replace("{q}", "")).hostname
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+    return `https://${domain}/favicon.ico`
   } catch {
     return ""
   }
@@ -27,12 +28,30 @@ export function ToolbarSettings({ locale: localeProp }: { locale?: Locale } = {}
   const [editIcon, setEditIcon] = useState("")
   const [blacklistInput, setBlacklistInput] = useState("")
   const [whitelistInput, setWhitelistInput] = useState("")
+  const [iconCache, setIconCache] = useState<Record<string, string>>({})
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const cfg = await storage.getToolbarConfig()
     setConfig(cfg)
     setBlacklistInput(cfg.blacklist.join("\n"))
     setWhitelistInput(cfg.whitelist.join("\n"))
+    const caches = await storage.getAllEngineIconCaches()
+    setIconCache(caches)
+    // Prefetch missing icons in background
+    for (const engine of cfg.engines) {
+      if (!caches[engine.id]) {
+        storage.prefetchEngineIcon(engine).then((ok) => {
+          if (ok) {
+            storage.getEngineIconCache(engine.id).then((data) => {
+              if (data) {
+                setIconCache((prev) => ({ ...prev, [engine.id]: data }))
+              }
+            })
+          }
+        })
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -89,11 +108,25 @@ export function ToolbarSettings({ locale: localeProp }: { locale?: Locale } = {}
     setNewEngineName("")
     setNewEngineUrl("")
     setNewEngineIcon("")
+    // Auto-download icon
+    storage.prefetchEngineIcon(engine).then((ok) => {
+      if (ok) {
+        storage.getEngineIconCache(engine.id).then((data) => {
+          if (data) setIconCache((prev) => ({ ...prev, [engine.id]: data }))
+        })
+      }
+    })
   }
 
   const removeEngine = (id: string) => {
     const next = { ...config!, engines: config!.engines.filter((e) => e.id !== id) }
     save(next)
+    storage.removeEngineIconCache(id)
+    setIconCache((prev) => {
+      const copy = { ...prev }
+      delete copy[id]
+      return copy
+    })
   }
 
   const startEditEngine = (engine: ToolbarSearchEngine) => {
@@ -118,12 +151,18 @@ export function ToolbarSettings({ locale: localeProp }: { locale?: Locale } = {}
       return
     }
     const isPost = url.includes("{POSTARGS}")
+    const updatedEngine: ToolbarSearchEngine = {
+      id: editingEngineId,
+      name,
+      urlTemplate: url,
+      method: isPost ? "POST" : "GET",
+      favicon: icon || undefined,
+      enabled: config.engines.find((e) => e.id === editingEngineId)?.enabled ?? true
+    }
     const next = {
       ...config,
       engines: config.engines.map((e) =>
-        e.id === editingEngineId
-          ? { ...e, name, urlTemplate: url, method: isPost ? ("POST" as const) : ("GET" as const), favicon: icon || undefined }
-          : e
+        e.id === editingEngineId ? updatedEngine : e
       )
     }
     save(next)
@@ -131,6 +170,15 @@ export function ToolbarSettings({ locale: localeProp }: { locale?: Locale } = {}
     setEditName("")
     setEditUrl("")
     setEditIcon("")
+    // Re-download icon since engine config changed
+    storage.removeEngineIconCache(updatedEngine.id)
+    storage.prefetchEngineIcon(updatedEngine).then((ok) => {
+      if (ok) {
+        storage.getEngineIconCache(updatedEngine.id).then((data) => {
+          if (data) setIconCache((prev) => ({ ...prev, [updatedEngine.id]: data }))
+        })
+      }
+    })
   }
 
   const cancelEditEngine = () => {
@@ -378,44 +426,125 @@ export function ToolbarSettings({ locale: localeProp }: { locale?: Locale } = {}
             <div className="space-y-1 max-h-40 overflow-y-auto">
               {config.engines.map((engine) => (
                 <div key={engine.id} className="flex items-center gap-1 bg-gray-50 rounded px-2 py-1">
-                  <input
-                    type="checkbox"
-                    checked={engine.enabled}
-                    onChange={() => toggleEngine(engine.id)}
-                    className="rounded border-gray-300 text-blue-600"
-                  />
-                  <span className="w-4 h-4 flex items-center justify-center text-xs">
-                {engine.favicon && !engine.favicon.startsWith("http") ? engine.favicon : (
-                  <img
-                    src={engine.favicon || getFaviconUrl(engine.urlTemplate)}
-                    alt=""
-                    className="w-4 h-4"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
-                  />
-                )}
-              </span>
-                  <span className="flex-1 truncate">{engine.name}</span>
-                  <button
-                    onClick={() => moveEngine(engine.id, -1)}
-                    className="text-gray-400 hover:text-gray-600 px-1"
-                    title={L.moveUp}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    onClick={() => moveEngine(engine.id, 1)}
-                    className="text-gray-400 hover:text-gray-600 px-1"
-                    title={L.moveDown}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    onClick={() => removeEngine(engine.id)}
-                    className="text-red-400 hover:text-red-600 px-1"
-                    title={L.delete}
-                  >
-                    ×
-                  </button>
+                  {editingEngineId === engine.id ? (
+                    <div className="flex items-center gap-1 flex-1">
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        placeholder={L.engineNamePlaceholder}
+                        className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px]"
+                      />
+                      <input
+                        type="text"
+                        value={editUrl}
+                        onChange={(e) => setEditUrl(e.target.value)}
+                        placeholder={L.engineUrlPlaceholder}
+                        className="flex-[2] border border-gray-200 rounded px-2 py-1 text-[11px]"
+                      />
+                      <input
+                        type="text"
+                        value={editIcon}
+                        onChange={(e) => setEditIcon(e.target.value)}
+                        placeholder={L.engineIconPlaceholder}
+                        className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px]"
+                      />
+                      <button
+                        onClick={saveEditEngine}
+                        className="px-2 py-1 bg-blue-600 text-white rounded text-[11px]"
+                      >
+                        {L.save}
+                      </button>
+                      <button
+                        onClick={cancelEditEngine}
+                        className="px-2 py-1 bg-gray-200 text-gray-600 rounded text-[11px]"
+                      >
+                        {L.cancel}
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="checkbox"
+                        checked={engine.enabled}
+                        onChange={() => toggleEngine(engine.id)}
+                        className="rounded border-gray-300 text-blue-600"
+                      />
+                      <span className="w-4 h-4 flex items-center justify-center text-xs relative">
+                        {engine.favicon && !engine.favicon.startsWith("http") && !engine.favicon.startsWith("data:") ? engine.favicon : (
+                          <>
+                            <span className="absolute inset-0 flex items-center justify-center text-gray-400 font-bold">
+                              {engine.name.charAt(0).toUpperCase()}
+                            </span>
+                            <img
+                              src={iconCache[engine.id] || getLocalIconUrl(engine.id)}
+                              alt=""
+                              className="w-4 h-4 relative z-10 bg-gray-50 object-contain"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement
+                                if (iconCache[engine.id]) {
+                                  target.style.display = "none"
+                                  return
+                                }
+                                const fallback = engine.favicon || getFaviconUrl(engine.urlTemplate)
+                                if (fallback && target.src !== fallback) {
+                                  target.src = fallback
+                                } else {
+                                  target.style.display = "none"
+                                }
+                              }}
+                            />
+                          </>
+                        )}
+                      </span>
+                      <span className="flex-1 truncate">{engine.name}</span>
+                      <button
+                        onClick={async () => {
+                          if (downloadingId) return
+                          setDownloadingId(engine.id)
+                          const ok = await storage.prefetchEngineIcon(engine)
+                          if (ok) {
+                            const data = await storage.getEngineIconCache(engine.id)
+                            if (data) setIconCache((prev) => ({ ...prev, [engine.id]: data }))
+                          }
+                          setDownloadingId(null)
+                        }}
+                        disabled={downloadingId === engine.id}
+                        className={`px-1 ${downloadingId === engine.id ? "text-blue-400 animate-pulse" : "text-gray-400 hover:text-blue-600"}`}
+                        title="Download icon"
+                      >
+                        {downloadingId === engine.id ? "⏳" : "⬇"}
+                      </button>
+                      <button
+                        onClick={() => startEditEngine(engine)}
+                        className="text-gray-400 hover:text-blue-600 px-1"
+                        title={L.edit}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        onClick={() => moveEngine(engine.id, -1)}
+                        className="text-gray-400 hover:text-gray-600 px-1"
+                        title={L.moveUp}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={() => moveEngine(engine.id, 1)}
+                        className="text-gray-400 hover:text-gray-600 px-1"
+                        title={L.moveDown}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={() => removeEngine(engine.id)}
+                        className="text-red-400 hover:text-red-600 px-1"
+                        title={L.delete}
+                      >
+                        ×
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

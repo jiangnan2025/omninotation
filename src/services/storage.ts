@@ -1,4 +1,7 @@
-import type { Annotation, AnnotationEntry, Bookmark, BookmarkFolder, Group, UserProfile, Reply, Visibility, ToolbarConfig, ToolbarSearchEngine, ToolbarStyle } from "@/types"
+import { getLocalIconUrl } from "@/services/color"
+import type { Annotation, AnnotationEntry, Bookmark, BookmarkFolder, Group, UserProfile, Reply, Visibility, ToolbarConfig, ToolbarSearchEngine, ToolbarStyle, AnnotationType, MarkStyle } from "@/types"
+
+import defaultEnginesJson from "./engines.json"
 
 const ANNOTATION_KEY_PREFIX = "annotations:"
 
@@ -193,6 +196,16 @@ export async function updateAnnotationStatus(url: string, annotationId: string, 
   await safeSet({ [key]: annotations })
 }
 
+export async function updateAnnotationColor(url: string, annotationId: string, color: string | undefined): Promise<void> {
+  const key = getKey(url)
+  const annotations = await getAnnotations(url)
+  const ann = annotations.find((a) => a.id === annotationId)
+  if (!ann) return
+  ann.data.color = color
+  ann.updatedAt = new Date().toISOString()
+  await safeSet({ [key]: annotations })
+}
+
 export async function clearAnnotations(url: string): Promise<void> {
   const key = getKey(url)
   await safeRemove(key)
@@ -376,37 +389,289 @@ export async function getAllAnnotations(): Promise<AnnotationEntry[]> {
   return entries
 }
 
+// ========================
+// Advanced Search
+// ========================
+
+export interface SearchFilters {
+  text: string
+  tags: string[]
+  types: AnnotationType[]
+  markStyles: MarkStyle[]
+  status: ("open" | "resolved")[]
+  site: string[]
+}
+
+export function parseSearchQuery(query: string): SearchFilters {
+  const filters: SearchFilters = {
+    text: "",
+    tags: [],
+    types: [],
+    markStyles: [],
+    status: [],
+    site: []
+  }
+
+  const parts = query.trim().split(/\s+/)
+  const textParts: string[] = []
+
+  for (const part of parts) {
+    const colonIdx = part.indexOf(":")
+    if (colonIdx > 0) {
+      const key = part.slice(0, colonIdx).toLowerCase()
+      const value = part.slice(colonIdx + 1).toLowerCase()
+      switch (key) {
+        case "tag":
+        case "标签":
+          filters.tags.push(value)
+          break
+        case "type":
+          if (value === "comment" || value === "edit") filters.types.push(value as AnnotationType)
+          break
+        case "style":
+          if (["highlight", "underline", "strikethrough", "squiggly"].includes(value)) {
+            filters.markStyles.push(value as MarkStyle)
+          }
+          break
+        case "status":
+          if (value === "resolved" || value === "open") filters.status.push(value as "open" | "resolved")
+          break
+        case "site":
+          filters.site.push(value)
+          break
+        default:
+          textParts.push(part)
+      }
+    } else {
+      textParts.push(part)
+    }
+  }
+
+  filters.text = textParts.join(" ").toLowerCase()
+  return filters
+}
+
+function searchRepliesRecursive(replies: Reply[], q: string): boolean {
+  return replies.some((r) =>
+    r.content.toLowerCase().includes(q) ||
+    (r.replies ? searchRepliesRecursive(r.replies, q) : false)
+  )
+}
+
+export function matchesAnnotation(
+  ann: Annotation,
+  pageTitle: string | undefined,
+  filters: SearchFilters
+): boolean {
+  if (filters.text) {
+    const q = filters.text
+    const textMatch =
+      ann.data.content.toLowerCase().includes(q) ||
+      (pageTitle?.toLowerCase().includes(q) ?? false) ||
+      (ann.quote?.toLowerCase().includes(q) ?? false) ||
+      (ann.replies ? searchRepliesRecursive(ann.replies, q) : false)
+    if (!textMatch) return false
+  }
+
+  if (filters.types.length > 0 && !filters.types.includes(ann.data.type)) return false
+  if (filters.markStyles.length > 0 && !filters.markStyles.includes(ann.data.markStyle || "highlight")) return false
+  if (filters.status.length > 0 && !filters.status.includes(ann.status || "open")) return false
+
+  return true
+}
+
 export function searchAnnotations(
   entries: AnnotationEntry[],
-  query: string
+  query: string,
+  bookmarks?: Bookmark[]
 ): AnnotationEntry[] {
-  if (!query.trim()) return entries
-  const q = query.trim().toLowerCase()
+  const filters = parseSearchQuery(query)
 
-  const searchReplies = (replies: Reply[]): boolean =>
-    replies.some((r) =>
-      r.content.toLowerCase().includes(q) ||
-      (r.replies ? searchReplies(r.replies) : false)
-    )
+  if (!filters.text && filters.tags.length === 0 && filters.types.length === 0 &&
+      filters.markStyles.length === 0 && filters.status.length === 0 && filters.site.length === 0) {
+    return entries
+  }
+
+  const urlTags = new Map<string, string[]>()
+  if (bookmarks) {
+    for (const bm of bookmarks) {
+      if (bm.tags) urlTags.set(bm.url, bm.tags.map((t) => t.toLowerCase()))
+    }
+  }
 
   return entries
     .map((entry) => {
-      const filtered = entry.annotations.filter((ann) => {
-        return (
-          ann.data.content.toLowerCase().includes(q) ||
-          (ann.title?.toLowerCase().includes(q) ?? false) ||
-          (ann.quote?.toLowerCase().includes(q) ?? false) ||
-          (ann.replies ? searchReplies(ann.replies) : false)
-        )
-      })
+      if (filters.site.length > 0) {
+        const url = entry.url.toLowerCase()
+        if (!filters.site.some((s) => url.includes(s))) return null
+      }
+
+      if (filters.tags.length > 0) {
+        const tags = urlTags.get(entry.url) || []
+        if (!filters.tags.some((t) => tags.includes(t))) return null
+      }
+
+      const filtered = entry.annotations.filter((ann) =>
+        matchesAnnotation(ann, ann.title, filters)
+      )
       return filtered.length > 0 ? { ...entry, annotations: filtered } : null
     })
     .filter(Boolean) as AnnotationEntry[]
 }
 
+// ========================
+// Markdown Export / Import
+// ========================
+
+function toBase64(str: string): string {
+  return btoa(unescape(encodeURIComponent(str)))
+}
+
+function fromBase64(str: string): string {
+  return decodeURIComponent(escape(atob(str)))
+}
+
+function formatExportDate(dateStr: string): string {
+  const d = new Date(dateStr)
+  try {
+    return d.toLocaleString("zh-CN", {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit"
+    })
+  } catch {
+    return dateStr
+  }
+}
+
+function getStyleEmoji(style?: string): string {
+  switch (style) {
+    case "highlight": return "🟡"
+    case "underline": return "🔵"
+    case "strikethrough": return "🔴"
+    case "squiggly": return "〰️"
+    default: return "🟡"
+  }
+}
+
+function getStyleLabel(style?: string): string {
+  const map: Record<string, string> = {
+    highlight: "高亮",
+    underline: "下划线",
+    strikethrough: "删除线",
+    squiggly: "波浪线"
+  }
+  return map[style || "highlight"] || (style || "Highlight")
+}
+
+function renderRepliesMd(replies: Reply[], depth = 0): string[] {
+  const lines: string[] = []
+  const indent = "  ".repeat(depth)
+  for (const r of replies) {
+    const author = r.author?.name || "Anonymous"
+    const date = formatExportDate(r.createdAt)
+    lines.push(`${indent}- **${author}** (${date}): ${r.content}`)
+    if (r.replies?.length) {
+      lines.push(...renderRepliesMd(r.replies, depth + 1))
+    }
+  }
+  return lines
+}
+
+function annotationsToMarkdown(
+  entries: AnnotationEntry[],
+  bookmarks: Bookmark[],
+  title: string
+): string {
+  const lines: string[] = []
+  lines.push(`# ${title}`)
+  lines.push("")
+  lines.push(`> ${new Date().toLocaleString("zh-CN")}`)
+  lines.push("")
+  lines.push("---")
+  lines.push("")
+
+  for (const entry of entries) {
+    const bm = bookmarks.find((b) => b.url === entry.url)
+    const pageTitle = bm?.title || entry.url
+
+    lines.push(`## Page: ${pageTitle}`)
+    lines.push(`- **URL:** ${entry.url}`)
+    if (bm?.tags?.length) {
+      lines.push(`- **Tags:** ${bm.tags.join(", ")}`)
+    }
+    lines.push("")
+
+    for (const ann of entry.annotations) {
+      const emoji = getStyleEmoji(ann.data.markStyle)
+      const styleName = getStyleLabel(ann.data.markStyle)
+      const resolved = ann.status === "resolved" ? " · [已解决]" : ""
+      const date = formatExportDate(ann.createdAt)
+
+      lines.push(`### ${emoji} ${styleName} · ${date}${resolved}`)
+      lines.push("")
+      if (ann.quote) {
+        const quoted = ann.quote.split("\n").join("\n> ")
+        lines.push(`> ${quoted}`)
+        lines.push("")
+      }
+      if (ann.data.content) {
+        lines.push(ann.data.content)
+        lines.push("")
+      }
+      if (ann.replies?.length) {
+        lines.push("**Replies:**")
+        lines.push("")
+        lines.push(...renderRepliesMd(ann.replies))
+        lines.push("")
+      }
+      lines.push("---")
+      lines.push("")
+    }
+  }
+
+  return lines.join("\n")
+}
+
+/**
+ * Parse markdown export file and extract the embedded JSON data.
+ * Falls back to plain JSON parsing for backward compatibility.
+ */
+export function parseMarkdownData(markdown: string): Record<string, any> | null {
+  // 1. Try HTML comment with base64 data
+  const match = markdown.match(/<!--\s*OmniNotation-Data:\s*([A-Za-z0-9+/=]+)\s*-->/)
+  if (match) {
+    try {
+      const jsonStr = fromBase64(match[1])
+      return JSON.parse(jsonStr)
+    } catch {
+      // fall through
+    }
+  }
+  // 2. Try plain JSON (backward compat)
+  try {
+    const trimmed = markdown.trim()
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      return JSON.parse(trimmed)
+    }
+  } catch {
+    // fall through
+  }
+  return null
+}
+
 // Export / Import all data
 export async function exportAllData(): Promise<Record<string, any>> {
   return safeGet(null as any)
+}
+
+export async function exportAllDataAsMarkdown(): Promise<string> {
+  const data = await exportAllData()
+  const entries = await getAllAnnotations()
+  const bookmarks: Bookmark[] = data[BOOKMARKS_KEY] || []
+  const md = annotationsToMarkdown(entries, bookmarks, "OmniNotation Annotations")
+  const jsonStr = JSON.stringify(data)
+  const base64 = toBase64(jsonStr)
+  return `${md}\n<!-- OmniNotation-Data: ${base64} -->\n`
 }
 
 export async function importAllData(data: Record<string, any>): Promise<void> {
@@ -422,6 +687,23 @@ export async function exportPageAnnotations(url: string): Promise<Record<string,
   if (result[key]) data[key] = result[key]
   if (result[orderKey]) data[orderKey] = result[orderKey]
   return data
+}
+
+export async function exportPageAnnotationsAsMarkdown(url: string): Promise<string> {
+  const data = await exportPageAnnotations(url)
+  const annotations: Annotation[] = data[getKey(url)] || []
+  const allData = await safeGet(null as any)
+  const bookmarks: Bookmark[] = allData[BOOKMARKS_KEY] || []
+  const bm = bookmarks.find((b) => b.url === url)
+  const pageTitle = bm?.title || url
+  const md = annotationsToMarkdown(
+    [{ url, annotations }],
+    bookmarks,
+    `OmniNotation: ${pageTitle}`
+  )
+  const jsonStr = JSON.stringify(data)
+  const base64 = toBase64(jsonStr)
+  return `${md}\n<!-- OmniNotation-Data: ${base64} -->\n`
 }
 
 export async function importPageAnnotations(url: string, data: Record<string, any>): Promise<boolean> {
@@ -449,24 +731,14 @@ export async function importPageAnnotations(url: string, data: Record<string, an
 
 const TOOLBAR_CONFIG_KEY = "toolbar_config"
 
-const DEFAULT_ENGINES: ToolbarSearchEngine[] = [
-  {
-    id: "google",
-    name: "Google",
-    urlTemplate: "https://www.google.com/search?q=%s",
-    method: "GET",
-    favicon: "🔍",
-    enabled: true
-  },
-  {
-    id: "bing",
-    name: "Bing",
-    urlTemplate: "https://www.bing.com/search?q=%s",
-    method: "GET",
-    favicon: "🅱️",
-    enabled: true
-  }
-]
+const DEFAULT_ENGINES: ToolbarSearchEngine[] = defaultEnginesJson.map((e) => ({
+  id: e.id,
+  name: e.name,
+  urlTemplate: e.urlTemplate,
+  method: "GET" as const,
+  favicon: e.favicon,
+  enabled: true
+}))
 
 const DEFAULT_STYLE: ToolbarStyle = {
   backgroundColor: "#ffffff",
@@ -495,6 +767,17 @@ export function getDefaultToolbarConfig(): ToolbarConfig {
   }
 }
 
+function mergeEngines(saved: ToolbarSearchEngine[], defaults: ToolbarSearchEngine[]): ToolbarSearchEngine[] {
+  const savedIds = new Set(saved.map((e) => e.id))
+  const merged = [...saved]
+  for (const engine of defaults) {
+    if (!savedIds.has(engine.id)) {
+      merged.push(engine)
+    }
+  }
+  return merged
+}
+
 export async function getToolbarConfig(): Promise<ToolbarConfig> {
   const result = await safeGet(TOOLBAR_CONFIG_KEY)
   const saved = result[TOOLBAR_CONFIG_KEY] as ToolbarConfig | undefined
@@ -505,10 +788,80 @@ export async function getToolbarConfig(): Promise<ToolbarConfig> {
     ...defaults,
     ...saved,
     style: { ...defaults.style, ...(saved.style || {}) },
-    engines: saved.engines?.length ? saved.engines : defaults.engines
+    engines: saved.engines?.length ? mergeEngines(saved.engines, defaults.engines) : defaults.engines
   }
 }
 
 export async function saveToolbarConfig(config: ToolbarConfig): Promise<void> {
   await safeSet({ [TOOLBAR_CONFIG_KEY]: config })
+}
+
+// ========================
+// Engine icon cache
+// ========================
+
+const ENGINE_ICONS_KEY = "engine_icons_cache"
+
+export async function getEngineIconCache(engineId: string): Promise<string | null> {
+  const result = await safeGet(ENGINE_ICONS_KEY)
+  const cache = result[ENGINE_ICONS_KEY] as Record<string, string> | undefined
+  return cache?.[engineId] ?? null
+}
+
+export async function setEngineIconCache(engineId: string, base64: string): Promise<void> {
+  const result = await safeGet(ENGINE_ICONS_KEY)
+  const cache = (result[ENGINE_ICONS_KEY] as Record<string, string> | undefined) ?? {}
+  cache[engineId] = base64
+  await safeSet({ [ENGINE_ICONS_KEY]: cache })
+}
+
+export async function removeEngineIconCache(engineId: string): Promise<void> {
+  const result = await safeGet(ENGINE_ICONS_KEY)
+  const cache = (result[ENGINE_ICONS_KEY] as Record<string, string> | undefined) ?? {}
+  delete cache[engineId]
+  await safeSet({ [ENGINE_ICONS_KEY]: cache })
+}
+
+export async function getAllEngineIconCaches(): Promise<Record<string, string>> {
+  const result = await safeGet(ENGINE_ICONS_KEY)
+  return (result[ENGINE_ICONS_KEY] as Record<string, string> | undefined) ?? {}
+}
+
+export async function prefetchEngineIcon(engine: ToolbarSearchEngine): Promise<boolean> {
+  const cached = await getEngineIconCache(engine.id)
+  if (cached) return true
+
+  const sources: string[] = []
+
+  if (engine.favicon?.startsWith("http") || engine.favicon?.startsWith("data:")) {
+    sources.push(engine.favicon)
+  }
+
+  try {
+    sources.push(getLocalIconUrl(engine.id))
+  } catch {}
+
+  try {
+    const domain = new URL(engine.urlTemplate.replace("{q}", "")).hostname
+    sources.push(`https://${domain}/favicon.ico`)
+  } catch {}
+
+  for (const url of sources) {
+    try {
+      const response = await fetch(url)
+      if (!response.ok) continue
+      const blob = await response.blob()
+      if (!blob.type.startsWith("image/")) continue
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onloadend = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      })
+      await setEngineIconCache(engine.id, base64)
+      return true
+    } catch {}
+  }
+
+  return false
 }

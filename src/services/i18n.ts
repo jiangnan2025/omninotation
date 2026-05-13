@@ -11,7 +11,12 @@ const translations = {
     underline: "下划线",
     strikethrough: "删除线",
     squiggly: "波浪线",
+    color: "颜色",
+    defaultColor: "默认",
+    customColor: "自定义",
     addComment: "添加批注",
+    copy: "复制",
+    copySuccess: "已复制",
     commentPlaceholder: "输入批注内容...",
     back: "返回",
     save: "保存",
@@ -32,7 +37,6 @@ const translations = {
     filterEdit: "修改",
     noAnnotations: "暂无批注",
     annotationCount: (n: number) => `本页共 ${n} 条批注`,
-    copy: "复制",
     delete: "删除",
 
     // AnnotationCard
@@ -78,6 +82,7 @@ const translations = {
     addNote: "+ 添加批注",
     stickyNoteBtn: "📌 便签",
     searchNotePlaceholder: "搜索批注内容、引用或评论...",
+    searchSyntaxHint: "语法: tag:标签 type:comment|edit style:highlight|underline|strikethrough|squiggly status:resolved|open site:域名",
     searchResults: (n: number) => `找到 ${n} 条结果`,
     customSort: "自定义排序",
     positionSort: "按页面位置排序",
@@ -90,7 +95,7 @@ const translations = {
     importBtn: "📥 导入",
     addTag: "＋ 标签",
     cannotCommunicate: "无法与页面通信，请刷新后重试",
-    invalidJsonError: "文件格式错误：不是有效的 JSON 对象",
+    invalidImportError: "文件格式错误：无法识别有效的批注数据",
     importConfirm: "导入将覆盖当前所有数据，确定继续？",
     importSuccess: "导入成功！",
     importFailed: (msg: string) => `导入失败：${msg}`,
@@ -169,7 +174,7 @@ const translations = {
     moveDown: "下移",
     engineNamePlaceholder: "名称",
     engineUrlPlaceholder: "URL (含 %s 或 {POSTARGS})",
-    engineIconPlaceholder: "图标 (emoji/URL)",
+    engineIconPlaceholder: "图标 (文字/emoji/URL)",
     add: "添加",
     blacklistWhitelist: "黑白名单",
     blacklist: "黑名单 (每行一个域名，如 example.com)",
@@ -188,7 +193,12 @@ const translations = {
     underline: "Underline",
     strikethrough: "Strikethrough",
     squiggly: "Squiggly",
+    color: "Color",
+    defaultColor: "Default",
+    customColor: "Custom",
     addComment: "Add Note",
+    copy: "Copy",
+    copySuccess: "Copied",
     commentPlaceholder: "Type your note...",
     back: "Back",
     save: "Save",
@@ -209,7 +219,6 @@ const translations = {
     filterEdit: "Edits",
     noAnnotations: "No annotations yet",
     annotationCount: (n: number) => `${n} annotation${n !== 1 ? "s" : ""} on this page`,
-    copy: "Copy",
     delete: "Delete",
 
     // AnnotationCard
@@ -255,6 +264,7 @@ const translations = {
     addNote: "+ Add Note",
     stickyNoteBtn: "📌 Sticky",
     searchNotePlaceholder: "Search notes, quotes, or comments...",
+    searchSyntaxHint: "Syntax: tag:tag-name type:comment|edit style:highlight|underline|strikethrough|squiggly status:resolved|open site:domain",
     searchResults: (n: number) => `Found ${n} result${n !== 1 ? "s" : ""}`,
     customSort: "Custom order",
     positionSort: "By page position",
@@ -267,7 +277,7 @@ const translations = {
     importBtn: "📥 Import",
     addTag: "＋ Tag",
     cannotCommunicate: "Cannot communicate with page. Please refresh and try again.",
-    invalidJsonError: "Invalid file format: not a valid JSON object",
+    invalidImportError: "Invalid file format: cannot recognize valid annotation data",
     importConfirm: "Import will overwrite all current data. Continue?",
     importSuccess: "Import successful!",
     importFailed: (msg: string) => `Import failed: ${msg}`,
@@ -346,7 +356,7 @@ const translations = {
     moveDown: "Move down",
     engineNamePlaceholder: "Name",
     engineUrlPlaceholder: "URL (with %s or {POSTARGS})",
-    engineIconPlaceholder: "Icon (emoji/URL)",
+    engineIconPlaceholder: "Icon (char/emoji/URL)",
     add: "Add",
     blacklistWhitelist: "Blacklist / Whitelist",
     blacklist: "Blacklist (one domain per line, e.g. example.com)",
@@ -366,6 +376,9 @@ export interface TranslationKeys {
   underline: string
   strikethrough: string
   squiggly: string
+  color: string
+  defaultColor: string
+  customColor: string
   addComment: string
   commentPlaceholder: string
   back: string
@@ -384,6 +397,7 @@ export interface TranslationKeys {
   noAnnotations: string
   annotationCount: (n: number) => string
   copy: string
+  copySuccess: string
   delete: string
   stickyNote: string
   markHighlight: string
@@ -422,6 +436,7 @@ export interface TranslationKeys {
   addNote: string
   stickyNoteBtn: string
   searchNotePlaceholder: string
+  searchSyntaxHint: string
   searchResults: (n: number) => string
   customSort: string
   positionSort: string
@@ -434,7 +449,7 @@ export interface TranslationKeys {
   importBtn: string
   addTag: string
   cannotCommunicate: string
-  invalidJsonError: string
+  invalidImportError: string
   importConfirm: string
   importSuccess: string
   importFailed: (msg: string) => string

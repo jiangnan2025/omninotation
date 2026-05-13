@@ -3,7 +3,22 @@ import { marked } from "marked"
 import katex from "katex"
 import "katex/dist/katex.min.css"
 
-export function MarkdownContent({ text }: { text: string }) {
+function highlightInHtml(html: string, terms: string[]): string {
+  const parts = html.split(/(<[^>]*>)/)
+  for (let i = 0; i < parts.length; i += 2) {
+    let text = parts[i]
+    for (const term of terms) {
+      if (!term) continue
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      const regex = new RegExp(`(${escaped})`, "gi")
+      text = text.replace(regex, '<mark class="omninotation-search-highlight">$1</mark>')
+    }
+    parts[i] = text
+  }
+  return parts.join("")
+}
+
+export function MarkdownContent({ text, highlightTerms }: { text: string; highlightTerms?: string[] }) {
   const html = useMemo(() => {
     const katexCache: { placeholder: string; html: string }[] = []
     let counter = 0
@@ -56,8 +71,13 @@ export function MarkdownContent({ text }: { text: string }) {
       }
     )
 
+    // Highlight search terms
+    if (highlightTerms?.length) {
+      renderedHtml = highlightInHtml(renderedHtml, highlightTerms)
+    }
+
     return renderedHtml
-  }, [text])
+  }, [text, highlightTerms])
 
   return (
     <div

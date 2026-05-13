@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import * as storage from "@/services/storage"
+import { COLOR_PRESETS, hexToRgba } from "@/services/color"
 import { detectLocale, t, type Locale } from "@/services/i18n"
 import type { Annotation, Reply } from "@/types"
 import { MarkdownContent } from "./MarkdownContent"
@@ -8,6 +9,7 @@ import { ReplyThread } from "./ReplyThread"
 export function AnnotationCard({
   ann,
   url,
+  highlightTerms,
   onDelete,
   onReplyAdded,
   onReplyDeleted,
@@ -15,6 +17,7 @@ export function AnnotationCard({
   onNestedReplyAdded,
   onEdit,
   onStatusToggle,
+  onColorChange,
   autoEdit,
   draggable,
   isDragging,
@@ -27,6 +30,7 @@ export function AnnotationCard({
 }: {
   ann: Annotation
   url: string
+  highlightTerms?: string[]
   onDelete: (id: string) => void
   onReplyAdded: (annId: string, reply: Reply) => void
   onReplyDeleted: (annId: string, replyId: string) => void
@@ -34,6 +38,7 @@ export function AnnotationCard({
   onNestedReplyAdded: (annId: string, parentReplyId: string, reply: Reply) => void
   onEdit: (annId: string, content: string) => void
   onStatusToggle: (annId: string) => void
+  onColorChange?: (annId: string, color: string | undefined) => void
   autoEdit?: boolean
   draggable?: boolean
   isDragging?: boolean
@@ -51,13 +56,7 @@ export function AnnotationCard({
   const initialAutoEditRef = useRef(autoEdit)
   const [isEditing, setIsEditing] = useState(() => initialAutoEditRef.current || false)
   const [editText, setEditText] = useState(ann.data.content)
-  const mountCountRef = useRef(0)
-  mountCountRef.current++
-  useEffect(() => {
-    console.log(`[AnnotationCard ${ann.id}] MOUNTED (autoEdit=${autoEdit}, initial isEditing=${isEditing})`)
-    return () => console.log(`[AnnotationCard ${ann.id}] UNMOUNTED`)
-  }, [ann.id])
-
+  const [showColorPicker, setShowColorPicker] = useState(false)
   const handleAddReply = async () => {
     if (!replyText.trim() || !url) return
     const reply: Reply = {
@@ -138,6 +137,13 @@ export function AnnotationCard({
           <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
             {ann.position ? `📌 ${L.stickyNote}` : ann.data.markStyle === "underline" ? `U̲ ${L.markUnderline}` : ann.data.markStyle === "strikethrough" ? `S̶ ${L.markStrikethrough}` : ann.data.markStyle === "squiggly" ? `〰 ${L.markSquiggly}` : `▌ ${L.markHighlight}`}
           </span>
+          {ann.data.color && (
+            <span
+              className="w-3 h-3 rounded-full border border-gray-300"
+              style={{ backgroundColor: ann.data.color }}
+              title={ann.data.color}
+            />
+          )}
           <span className="text-[10px] px-1 py-0.5 rounded bg-gray-100 text-gray-600">
             👤 {ann.author.name}
           </span>
@@ -150,7 +156,45 @@ export function AnnotationCard({
             {new Date(ann.createdAt).toLocaleString()}
           </span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {onColorChange && (
+            <div className="relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowColorPicker((v) => !v) }}
+                className="text-xs text-gray-400 hover:text-gray-600"
+                title="Color"
+              >
+                🎨
+              </button>
+              {showColorPicker && (
+                <div className="absolute right-0 top-5 z-20 bg-white border border-gray-200 rounded shadow-lg p-1 flex gap-1 items-center">
+                  {COLOR_PRESETS.map(({ c, cls }) => (
+                    <button
+                      key={c}
+                      onClick={(e) => { e.stopPropagation(); onColorChange(ann.id, c); setShowColorPicker(false) }}
+                      className={`w-4 h-4 rounded-full ${cls} border-2 ${ann.data.color === c ? "border-gray-800" : "border-transparent hover:border-gray-400"}`}
+                    />
+                  ))}
+                  <label className="relative w-4 h-4 rounded-full border-2 border-gray-300 hover:border-gray-500 cursor-pointer flex items-center justify-center overflow-hidden" title={L.customColor}>
+                    <input
+                      type="color"
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(e) => { onColorChange(ann.id, hexToRgba(e.target.value)); setShowColorPicker(false) }}
+                    />
+                    <span className="text-[8px] text-gray-500">+</span>
+                  </label>
+                  {ann.data.color && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onColorChange(ann.id, undefined); setShowColorPicker(false) }}
+                      className="text-[10px] text-gray-400 hover:text-gray-600 px-1"
+                    >
+                      {L.defaultColor}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -184,7 +228,7 @@ export function AnnotationCard({
         <div className="mb-2">
           <div className="relative group">
             <div className="quote-content max-h-48 overflow-y-auto">
-              <MarkdownContent text={ann.quote} />
+              <MarkdownContent text={ann.quote} highlightTerms={highlightTerms} />
             </div>
             <button
               onClick={(e) => {
@@ -226,7 +270,7 @@ export function AnnotationCard({
               </div>
             </div>
           ) : (
-            <MarkdownContent text={ann.data.content} />
+            <MarkdownContent text={ann.data.content} highlightTerms={highlightTerms} />
           )}
         </div>
       )}

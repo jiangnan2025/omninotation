@@ -40,6 +40,7 @@ export interface Annotation {
     type: AnnotationType
     content: string
     markStyle?: MarkStyle
+    color?: string
   }
   status?: AnnotationStatus
   author: Author

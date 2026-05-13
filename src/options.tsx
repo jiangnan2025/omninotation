@@ -152,8 +152,13 @@ export default function OptionsPage() {
     load()
   }, [load])
 
+  const highlightTerms = useMemo(() => {
+    const filters = storage.parseSearchQuery(query)
+    return filters.text ? filters.text.split(/\s+/).filter(Boolean) : []
+  }, [query])
+
   const filteredEntries = useMemo(() => {
-    let result = storage.searchAnnotations(entries, query)
+    let result = storage.searchAnnotations(entries, query, bookmarks)
     // Filter by selected folder
     if (selectedFolderId) {
       const folderIds = getDescendantFolderIds(folders, selectedFolderId)
@@ -546,7 +551,7 @@ export default function OptionsPage() {
                           </p>
                         )}
 
-                        <MarkdownContent text={ann.data.content} />
+                        <MarkdownContent text={ann.data.content} highlightTerms={highlightTerms} />
 
                         {countReplies(ann) > 0 && (
                           <p className="text-[10px] text-gray-400 mt-1">

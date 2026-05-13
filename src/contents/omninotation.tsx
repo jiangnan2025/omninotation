@@ -126,7 +126,7 @@ export default function OmniNotationOverlay() {
             const range = anchor.resolveRange(root, ann.selector)
             if (range) {
               try {
-                wrapRange(range, ann.id, ann.data.type, ann.data.markStyle || "highlight")
+                wrapRange(range, ann.id, ann.data.type, ann.data.markStyle || "highlight", ann.data.color)
               } catch (e) {
                 console.warn("[OmniNotation] Failed to wrap highlight:", e)
               }
@@ -270,7 +270,7 @@ export default function OmniNotationOverlay() {
       if (cfg.triggerMode === "middle-click") {
         if (pendingMiddleClick.current) {
           pendingMiddleClick.current = false
-          setTimeout(showToolbarIfAllowed, 50)
+          setTimeout(showToolbarIfAllowed, 10)
         }
         return
       }
@@ -284,13 +284,13 @@ export default function OmniNotationOverlay() {
         if (text) setPopupSelection({ text, range, rect: range.getBoundingClientRect() })
       }
 
-      if (cfg.triggerMode === "select") { setTimeout(showAfterSettle, 10); return }
+      if (cfg.triggerMode === "select") { setTimeout(showAfterSettle, 0); return }
 
       const mod = modifierState.current
       if ((cfg.triggerMode === "ctrl" && mod.ctrl) ||
           (cfg.triggerMode === "alt" && mod.alt) ||
           (cfg.triggerMode === "shift" && mod.shift)) {
-        setTimeout(showAfterSettle, 10)
+        setTimeout(showAfterSettle, 0)
       }
     }
 
@@ -328,7 +328,7 @@ export default function OmniNotationOverlay() {
           const r = currentSel.getRangeAt(0)
           const t = currentSel.toString().trim()
           if (t) setPopupSelection({ text: t, range: r, rect: r.getBoundingClientRect() })
-        }, 150)
+        }, 50)
       } else {
         if (hoverShowTimer.current) { clearTimeout(hoverShowTimer.current); hoverShowTimer.current = null }
       }

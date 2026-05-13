@@ -4,6 +4,7 @@ import * as anchor from "@/services/anchor"
 import { getDomainConfig } from "@/services/config"
 import { rangeToMarkdown } from "@/services/htmlToMarkdown"
 import * as storage from "@/services/storage"
+import { COLOR_PRESETS, DEFAULT_ANNOTATION_COLOR, getLocalIconUrl, hexToRgba } from "@/services/color"
 import { detectLocale, t, type Locale } from "@/services/i18n"
 import type { MarkStyle, ToolbarConfig, ToolbarSearchEngine } from "@/types"
 
@@ -11,20 +12,15 @@ import type { MarkStyle, ToolbarConfig, ToolbarSearchEngine } from "@/types"
 // Helpers
 // ========================
 
-function getEngineIcon(engine: ToolbarSearchEngine): { type: "img" | "text"; value: string } {
-  if (engine.favicon) {
-    // If favicon looks like a URL, use it as image
-    if (engine.favicon.startsWith("http") || engine.favicon.startsWith("data:")) {
-      return { type: "img", value: engine.favicon }
-    }
-    // Otherwise treat as emoji/text icon
-    return { type: "text", value: engine.favicon }
+function getFallbackIconUrl(engine: ToolbarSearchEngine): string | undefined {
+  if (engine.favicon?.startsWith("http") || engine.favicon?.startsWith("data:")) {
+    return engine.favicon
   }
   try {
     const domain = new URL(engine.urlTemplate.replace("{q}", "")).hostname
-    return { type: "img", value: `https://www.google.com/s2/favicons?domain=${domain}&sz=32` }
+    return `https://${domain}/favicon.ico`
   } catch {
-    return { type: "text", value: engine.name.charAt(0) }
+    return undefined
   }
 }
 
@@ -120,6 +116,90 @@ function getMarkStyles(locale: Locale): { key: MarkStyle; label: string; icon: s
 // Component
 // ========================
 
+function EngineIcon({ engine, size }: { engine: ToolbarSearchEngine, size: number }) {
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading")
+  const [imgSrc, setImgSrc] = useState<string | null>(null)
+
+  // Text/emoji favicon: render directly
+  if (engine.favicon && !engine.favicon.startsWith("http") && !engine.favicon.startsWith("data:")) {
+    return <span style={{ fontSize: size * 0.8 }}>{engine.favicon}</span>
+  }
+
+  useEffect(() => {
+    let isMounted = true
+    setStatus("loading")
+    setImgSrc(null)
+
+    async function loadIcon() {
+      // Priority 1: chrome.storage.local cache (downloaded by settings page)
+      try {
+        const cached = await storage.getEngineIconCache(engine.id)
+        if (cached && isMounted) {
+          setImgSrc(cached)
+          return
+        }
+      } catch {}
+
+      // Priority 2: local assets shipped with the extension
+      try {
+        const localUrl = getLocalIconUrl(engine.id)
+        const res = await fetch(localUrl)
+        if (res.ok && isMounted) {
+          const blob = await res.blob()
+          if (blob.type.startsWith("image/")) {
+            const reader = new FileReader()
+            reader.onloadend = () => {
+              if (isMounted) setImgSrc(reader.result as string)
+            }
+            reader.readAsDataURL(blob)
+            return
+          }
+        }
+      } catch {}
+
+      // Priority 3: online fallback (user favicon or domain favicon.ico)
+      const fallback = getFallbackIconUrl(engine)
+      if (fallback && isMounted) {
+        setImgSrc(fallback)
+      } else if (isMounted) {
+        setStatus("error")
+      }
+    }
+
+    loadIcon()
+    return () => { isMounted = false }
+  }, [engine])
+
+  if (status === "error") {
+    return <span style={{ fontSize: size * 0.8 }}>{engine.name.charAt(0).toUpperCase()}</span>
+  }
+
+  return (
+    <div style={{ width: size, height: size, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      {status !== "loaded" && (
+        <span className="absolute text-gray-400 font-medium" style={{ fontSize: size * 0.8 }}>
+          {engine.name.charAt(0).toUpperCase()}
+        </span>
+      )}
+      {imgSrc && (
+        <img
+          src={imgSrc}
+          alt={engine.name}
+          className="absolute inset-0 object-contain"
+          style={{
+            width: "100%",
+            height: "100%",
+            opacity: status === "loaded" ? 1 : 0,
+            transition: "opacity 0.2s"
+          }}
+          onLoad={() => setStatus("loaded")}
+          onError={() => setStatus("error")}
+        />
+      )}
+    </div>
+  )
+}
+
 export interface ToolbarSelection {
   text: string
   range: Range
@@ -138,6 +218,8 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
   const [showCommentForm, setShowCommentForm] = useState(false)
   const [comment, setComment] = useState("")
   const [markStyle, setMarkStyle] = useState<MarkStyle>("highlight")
+  const [annotationColor, setAnnotationColor] = useState<string | undefined>(DEFAULT_ANNOTATION_COLOR)
+  const [copySuccess, setCopySuccess] = useState(false)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isOverSelection = useRef(false)
   const locale = useRef<Locale>(detectLocale()).current
@@ -145,6 +227,15 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
   const L = t(locale)
   const MARK_STYLES = getMarkStyles(locale)
   const style = config.style
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text)
+    setCopySuccess(true)
+    setTimeout(() => {
+      setCopySuccess(false)
+      onClose()
+    }, 1000)
+  }, [text, onClose])
 
   // Auto-close after configured delay unless hovered
   const startCloseTimer = useCallback(() => {
@@ -261,7 +352,7 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
         title: document.title,
         selector,
         quote: selectedMarkdown.slice(0, 2000),
-        data: { type: "comment", content: userContent.trim(), markStyle: styleArg },
+        data: { type: "comment", content: userContent.trim(), markStyle: styleArg, color: annotationColor },
         author: { id: "local-user", name: "Me" },
         createdAt: new Date().toISOString()
       })
@@ -325,7 +416,6 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
   const enabledEngines = config.engines.filter((e) => e.enabled)
 
   const renderEngineButton = (engine: ToolbarSearchEngine) => {
-    const icon = getEngineIcon(engine)
     return (
       <button
         key={engine.id}
@@ -335,20 +425,7 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
         onMouseEnter={clearCloseTimer}
         onMouseLeave={startCloseTimer}
       >
-        {icon.type === "img" ? (
-          <img
-            src={icon.value}
-            alt={engine.name}
-            className="object-contain"
-            style={{ width: buttonSize * 0.5, height: buttonSize * 0.5 }}
-            onError={(e) => {
-              const target = e.target as HTMLImageElement
-              target.style.display = "none"
-            }}
-          />
-        ) : (
-          <span>{icon.value}</span>
-        )}
+        <EngineIcon engine={engine} size={buttonSize * 0.5} />
         {!config.showFaviconOnly && (
           <span className="ml-1 truncate" style={{ maxWidth: 60, fontSize: `${Math.max(9, buttonSize * 0.32)}px` }}>
             {engine.name}
@@ -393,6 +470,34 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
               {icon}
             </button>
           ))}
+        </div>
+        <div className="flex items-center gap-1 mb-2">
+          <span className="text-[10px] text-gray-400">{L.color}</span>
+          {COLOR_PRESETS.map(({ c, cls }) => (
+            <button
+              key={c}
+              onClick={() => setAnnotationColor(c)}
+              className={`w-4 h-4 rounded-full ${cls} border-2 ${annotationColor === c ? "border-gray-800" : "border-transparent hover:border-gray-400"}`}
+              title={c}
+            />
+          ))}
+          <label className="relative w-4 h-4 rounded-full border-2 border-gray-300 hover:border-gray-500 cursor-pointer flex items-center justify-center overflow-hidden" title={L.customColor}>
+            <input
+              type="color"
+              className="absolute inset-0 opacity-0 cursor-pointer"
+              value={annotationColor ? (annotationColor.startsWith("rgba") ? "#facc15" : annotationColor) : "#facc15"}
+              onChange={(e) => setAnnotationColor(hexToRgba(e.target.value))}
+            />
+            <span className="text-[8px] text-gray-500">+</span>
+          </label>
+          {annotationColor && (
+            <button
+              onClick={() => setAnnotationColor(undefined)}
+              className="text-[10px] text-gray-400 hover:text-gray-600 ml-1"
+            >
+              {L.defaultColor}
+            </button>
+          )}
         </div>
         <div className="flex justify-end gap-2">
           <button
@@ -440,6 +545,13 @@ export function SelectionToolbar({ selection, config, onClose }: SelectionToolba
             style={buttonStyle}
           >
             📝
+          </button>
+          <button
+            title={copySuccess ? L.copySuccess : L.copy}
+            onClick={handleCopy}
+            style={buttonStyle}
+          >
+            {copySuccess ? "✓" : "📋"}
           </button>
           {enabledEngines.length > 0 && <div style={dividerStyle} />}
         </>
